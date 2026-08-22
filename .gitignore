@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and editor files
+.env
+.vscode/
+.idea/
+
+# Local application data
+storage/*
+!storage/.gitkeep
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
