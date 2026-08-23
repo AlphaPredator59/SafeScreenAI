@@ -100,9 +100,38 @@ Files are streamed into `STORAGE_PATH/videos` with server-generated filenames; t
 
 Internal services sample JPEG frames every `FRAME_SAMPLING_INTERVAL_SECONDS` (default: one second) into controlled `storage/frames` paths, and extract audio into `storage/audio` paths. Audio inspection/extraction requires `ffprobe` and `ffmpeg` available on `PATH`; videos without an audio stream return a successful no-audio result.
 
-## AI interfaces
+## AI architecture & model adapters
 
-AI services use vendor-neutral contracts and Protocol interfaces for vision, transcription, text moderation, and context analysis. Deterministic mocks keep tests fast; a YOLO, Whisper, transformer, or VLM adapter can later implement the same interface without changing callers.
+AI services adhere to vendor-neutral contracts and Protocol interfaces for vision, speech-to-text, text moderation, and context analysis. Deterministic mocks keep tests fast, and real adapters can be activated via configuration:
+
+- **Vision (`YoloVisionAnalyzer`)**: Uses Ultralytics YOLO models (default: `yolov8n.pt`, ~6MB nano model) for visual object and weapon/tool detection. Produces timestamped `VisualDetection` contracts with bounding box metadata.
+- **Speech-to-Text (`WhisperTranscriber`)**: Uses OpenAI Whisper (default: `tiny`, ~75MB) for speech transcription with segment timestamps. Handles videos without audio streams gracefully.
+- **Text Moderation (`TransformerTextModerator`)**: Uses Hugging Face transformer sequence classification pipelines (default: `unitary/toxic-bert`) to evaluate transcript text and extract policy signals (`TextModerationSignal`).
+- **Context Engine (`QwenContextAnalyzer`)**: Uses local Qwen 2.5 VL 7B (`qwen2.5vl:7b`) via Ollama. Fuses visual detections, video frames, Whisper audio transcripts, and text policy signals into a structured `ContextualInterpretation`.
+- **Deterministic Mocks**: `MockVisionAnalyzer`, `MockTranscriber`, `MockTextModerator`, and `MockContextAnalyzer` provide zero-latency, deterministic execution for local development and CI.
+
+### Model Execution & Hardware Requirements
+- **Inference Hardware**: YOLO and Whisper run on standard multi-core CPUs or CUDA. Qwen 2.5 VL (`qwen2.5vl:7b`) runs locally via Ollama with 4-bit quantization on the NVIDIA RTX 3070 Laptop GPU (consuming ~6.6 GB VRAM).
+- **Automatic Downloads**: When `AI_MODE=real`, YOLO and Whisper download their checkpoints on first use, and `QwenContextAnalyzer` connects to the local Ollama runtime.
+
+### Switching AI Mode
+In `.env`:
+```text
+# Use fast mocks for test suites & offline dev (default)
+AI_MODE=mock
+
+# Or activate real AI models on CPU / CUDA + Ollama Qwen
+AI_MODE=real
+AI_DEVICE=cpu
+CONTEXT_MODEL_NAME=qwen2.5vl:7b
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+```
+
+### Running Real Model Smoke Tests
+To verify live model inference across YOLO, Whisper, Transformer, and Qwen 2.5 VL:
+```powershell
+python scripts/smoke_test_ai_models.py --device cpu --qwen-model qwen2.5vl:7b
+```
 
 ## Current structure
 
@@ -113,19 +142,33 @@ backend/
     core/         Settings and logging
     db/           SQLAlchemy engine, enums, models, and session dependency
     schemas/      Pydantic request and response schemas
+    services/
+      ai/         AI contracts, protocols, mocks, YOLO/Whisper/Transformer/Qwen adapters, and factory
+      video/      Video ingestion, validation, metadata, processing, and repository
     main.py       Application factory and FastAPI entry point
-  tests/
+  tests/          Unit tests for domain, migrations, ingestion, processing, AI adapters, and context engine
 storage/          Local runtime storage (ignored except for .gitkeep)
 migrations/       Alembic migration environment and revision history
+scripts/          Utility and smoke testing scripts
 ```
 
 ## Environment variables
 
-| Variable | Purpose |
-| --- | --- |
-| `APP_NAME` | Public application name |
-| `APP_ENV` | Runtime environment label |
-| `API_V1_PREFIX` | Prefix for public API routes |
-| `LOG_LEVEL` | Python log level |
-| `DATABASE_URL` | PostgreSQL SQLAlchemy connection URL |
-| `STORAGE_PATH` | Local media storage location |
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `APP_NAME` | Public application name | `SafeScreen AI` |
+| `APP_ENV` | Runtime environment label | `development` |
+| `API_V1_PREFIX` | Prefix for public API routes | `/api/v1` |
+| `LOG_LEVEL` | Python log level | `INFO` |
+| `DATABASE_URL` | PostgreSQL SQLAlchemy connection URL | `postgresql+psycopg://...` |
+| `STORAGE_PATH` | Local media storage location | `storage` |
+| `AI_MODE` | AI adapter mode (`mock` or `real`) | `mock` |
+| `AI_DEVICE` | Hardware device for inference (`cpu` or `cuda`) | `cpu` |
+| `VISION_MODEL_NAME` | YOLO model identifier / checkpoint path | `yolov8n.pt` |
+| `VISION_CONFIDENCE_THRESHOLD` | Vision minimum detection confidence | `0.25` |
+| `TRANSCRIPTION_MODEL_NAME` | Whisper model size (`tiny`, `base`, `small`, etc.) | `tiny` |
+| `TEXT_MODERATION_MODEL_NAME` | Hugging Face model identifier for text classification | `unitary/toxic-bert` |
+| `TEXT_MODERATION_CONFIDENCE_THRESHOLD` | Minimum text moderation signal confidence | `0.5` |
+| `CONTEXT_MODEL_NAME` | Local Qwen model tag in Ollama | `qwen2.5vl:7b` |
+| `OLLAMA_BASE_URL` | Ollama HTTP endpoint URL | `http://127.0.0.1:11434` |
+| `CONTEXT_TIMEOUT_SECONDS` | Timeout in seconds for Qwen VLM generation | `120.0` |

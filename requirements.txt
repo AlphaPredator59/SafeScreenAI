@@ -7,6 +7,12 @@ alembic>=1.14,<2.0
 python-multipart>=0.0.9,<1.0
 opencv-python-headless>=4.10,<5.0
 
+# AI Models & Inference (Milestone 6)
+torch>=2.2.0
+ultralytics>=8.1.0
+openai-whisper>=20231117
+transformers>=4.40.0
+
 # Testing
 pytest>=8.0,<9.0
 httpx>=0.27,<1.0

@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     frame_image_format: str = "jpg"
     frame_image_quality: int = 85
     audio_output_format: str = "wav"
+    ai_mode: str = "mock"
+    ai_device: str = "cpu"
+    vision_model_name: str = "yolov8n.pt"
+    vision_confidence_threshold: float = 0.25
+    transcription_model_name: str = "tiny"
+    transcription_language: str | None = None
+    text_moderation_model_name: str = "unitary/toxic-bert"
+    text_moderation_confidence_threshold: float = 0.5
+    context_model_name: str = "qwen2.5vl:7b"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    context_timeout_seconds: float = 120.0
 
 
 @lru_cache
