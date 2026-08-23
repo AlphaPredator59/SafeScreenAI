@@ -222,7 +222,7 @@ class QwenContextAnalyzer:
             ],
             "format": "json",
             "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": 8192},
+            "options": {"temperature": 0.1, "num_ctx": 8192, "num_predict": 1024},
         }
 
         try:
@@ -247,10 +247,24 @@ class QwenContextAnalyzer:
             clean_json = re.sub(r"^```(?:json)?\n?", "", clean_json)
             clean_json = re.sub(r"\n?```$", "", clean_json).strip()
 
+        parsed: dict[str, Any] | None = None
         try:
             parsed = json.loads(clean_json)
-        except Exception as error:
-            raise AIServiceError(f"Failed to parse Qwen JSON response: {error}. Raw content: {raw_content[:200]}") from error
+        except Exception:
+            # Resilient fallback extraction if JSON was slightly truncated
+            cat_match = re.search(r'"category"\s*:\s*"([^"]+)"', raw_content)
+            conf_match = re.search(r'"confidence"\s*:\s*([0-9.]+)', raw_content)
+            reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', raw_content)
+            refs_match = re.findall(r'"(frame_[a-zA-Z0-9_]+)"', raw_content)
+            if cat_match:
+                parsed = {
+                    "category": cat_match.group(1),
+                    "confidence": float(conf_match.group(1)) if conf_match else 0.8,
+                    "reasoning": reasoning_match.group(1) if reasoning_match else "Extracted contextual reasoning.",
+                    "evidence_references": refs_match,
+                }
+            else:
+                raise AIServiceError(f"Failed to parse Qwen JSON response. Raw content: {raw_content[:200]}")
 
         category = str(parsed.get("category", "unspecified_context")).strip()
         confidence = self._parse_confidence(parsed.get("confidence", 0.8))

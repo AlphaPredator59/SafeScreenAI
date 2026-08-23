@@ -55,6 +55,7 @@ class ModerationResult(Base):
     __tablename__ = "moderation_results"
     __table_args__ = (
         CheckConstraint("overall_confidence >= 0 AND overall_confidence <= 1", name="ck_moderation_results_confidence_range"),
+        CheckConstraint("risk_score >= 0 AND risk_score <= 1", name="ck_moderation_results_risk_score_range"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -63,7 +64,9 @@ class ModerationResult(Base):
         Enum(ModerationDecision, name="moderation_decision", create_constraint=True), nullable=False
     )
     risk_level: Mapped[RiskLevel] = mapped_column(Enum(RiskLevel, name="risk_level", create_constraint=True), nullable=False)
+    risk_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     overall_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     video: Mapped[Video] = relationship(back_populates="moderation_results")

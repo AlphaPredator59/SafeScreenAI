@@ -134,24 +134,117 @@ To verify live model inference across YOLO, Whisper, Transformer, and Qwen 2.5 V
 python scripts/smoke_test_ai_models.py --device cpu --qwen-model qwen2.5vl:7b
 ```
 
+## Moderation Persistence & Reporting (Milestone 9)
+
+Milestone 9 completes the moderation lifecycle by persisting domain evaluation outcomes to PostgreSQL and exposing them via structured, sanitized public API endpoints without LLM re-computation:
+
+- **Moderation Persistence Layer (`ModerationPersistenceService`, `ModerationRepository`)**:
+  - Atomically stores decision, risk level, risk score, confidence, and explainability narrative in `moderation_results`.
+  - Persists policy-relevant findings into `detections` (raw non-violating objects like cooking knives or vegetables are NOT recorded as policy violations).
+  - Persists multi-modal evidence items in `evidence` with sanitized public references (preventing internal host path exposure).
+  - Persists spoken dialogue segments in `transcript_segments` (videos with no audio record 0 rows and succeed).
+  - Supports atomic re-processing: re-evaluating a video cleanly replaces the prior moderation tree without orphan records.
+- **Report & Evidence Retrieval Service (`ModerationReportService`)**:
+  - Generates comprehensive `ModerationReportResponse` objects directly from PostgreSQL.
+  - Exposes dedicated `GET /api/v1/videos/{video_id}/evidence` collections (empty lists for benign videos with 0 evidence).
+
+### API Endpoints
+
+#### 1. Retrieve Full Moderation Report
+`GET /api/v1/videos/{video_id}/moderation`
+
+```powershell
+curl.exe http://127.0.0.1:8000/api/v1/videos/{video_id}/moderation
+```
+
+Sample JSON response:
+```json
+{
+  "video_id": "test_slap",
+  "filename": "Slap.mp4",
+  "created_at": "2026-08-23T11:50:50.123456Z",
+  "decision": "REVIEW_REQUIRED",
+  "risk_level": "HIGH",
+  "risk_score": 0.765,
+  "overall_confidence": 0.8261,
+  "detected_categories": ["threats"],
+  "explanation": "Evidence Analyzed: 39 visual detection(s)... context inferred as 'threatening interaction' (conf: 0.90)... Contextual Impact: Identified threatening/hostile context reinforced policy risk.",
+  "findings": [
+    {
+      "id": "det_...",
+      "category": "threats",
+      "confidence": 0.95,
+      "start_timestamp": 0.0,
+      "end_timestamp": 30.0,
+      "explanation": "Policy finding for 'threats' supported by multi-modal evidence synthesis.",
+      "evidence_references": ["frame_3d7e96a449fd4789bf034c84b716c522", "..."]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev_...",
+      "type": "context",
+      "timestamp": 0.0,
+      "content": "Threatening altercation detected",
+      "reference": "frame_3d7e96a449fd4789bf034c84b716c522"
+    }
+  ],
+  "transcripts": [
+    {
+      "start_timestamp": 0.0,
+      "end_timestamp": 2.0,
+      "text": "you"
+    }
+  ]
+}
+```
+
+#### 2. Retrieve Traceable Evidence Collection
+`GET /api/v1/videos/{video_id}/evidence`
+
+```powershell
+curl.exe http://127.0.0.1:8000/api/v1/videos/{video_id}/evidence
+```
+
+Sample JSON response:
+```json
+{
+  "video_id": "test_cooking",
+  "total_count": 0,
+  "evidence": []
+}
+```
+
+## Running the End-to-End Pipeline
+
+Run all 9 stages (M1–M9) against real local models and PostgreSQL:
+
+```powershell
+# Run on benign cooking video
+python scripts/test_video_pipeline.py --video "Test Videos/Cooking.mp4"
+
+# Run on threatening/violence altercation video
+python scripts/test_video_pipeline.py --video "Test Videos/Slap.mp4"
+```
+
 ## Current structure
 
 ```text
 backend/
   app/
-    api/          Versioned route registration and route handlers
+    api/          Versioned route registration (health, videos, moderation)
     core/         Settings and logging
     db/           SQLAlchemy engine, enums, models, and session dependency
-    schemas/      Pydantic request and response schemas
+    schemas/      Pydantic request and response schemas (health, video, moderation)
     services/
       ai/         AI contracts, protocols, mocks, YOLO/Whisper/Transformer/Qwen adapters, and factory
-      moderation/ ModerationEngine, severity configs, evidence traceability, and ModerationResult
+      moderation/ ModerationEngine, severity configs, evidence traceability, repository, persistence, reporting
       video/      Video ingestion, validation, metadata, processing, and repository
     main.py       Application factory and FastAPI entry point
-  tests/          Unit tests for domain, migrations, ingestion, processing, AI adapters, context engine, and moderation engine
+  tests/          Unit and integration tests (migrations, domain, ingestion, processing, AI adapters, context engine, moderation engine, persistence, API routes)
 storage/          Local runtime storage (ignored except for .gitkeep)
 migrations/       Alembic migration environment and revision history
-scripts/          Utility and smoke testing scripts
+scripts/          Pipeline evaluation and smoke test scripts
 ```
 
 ## Environment variables

@@ -29,6 +29,7 @@ if "ffmpeg" not in system_path.lower() and "ffmpeg" not in user_path.lower():
         pass
 
 from app.core.config import Settings, get_settings
+from app.db.database import get_session_factory
 from app.db.models import Video
 from app.services.ai.contracts import (
     AIServiceError,
@@ -44,7 +45,14 @@ from app.services.ai.factory import (
     get_transcriber,
     get_vision_analyzer,
 )
-from app.services.moderation import ModerationConfig, ModerationEngine, ModerationResult
+from app.services.moderation import (
+    ModerationConfig,
+    ModerationEngine,
+    ModerationPersistenceService,
+    ModerationReportService,
+    ModerationRepository,
+    ModerationResult,
+)
 from app.services.video.metadata import VideoMetadata, VideoMetadataService
 from app.services.video.processing import (
     AudioArtifact,
@@ -52,6 +60,7 @@ from app.services.video.processing import (
     FrameArtifact,
     FrameProcessingService,
 )
+from app.services.video.repository import VideoRepository
 from app.services.video.storage import LocalStorageService
 
 
@@ -109,7 +118,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 1: Video Metadata Extraction
     # -------------------------------------------------------------------------
-    print("\n[Stage 1/8] Extracting Video Metadata (Milestone 1)...")
+    print("\n[Stage 1/9] Extracting Video Metadata (Milestone 1)...")
     s1_start = time.perf_counter()
     metadata: VideoMetadata | None = None
     try:
@@ -130,8 +139,10 @@ def run_pipeline(
         print(f"  -> STATUS: FAILED ({exc})")
         return False
 
-    # Create in-memory Video entity for internal processing services
-    video_id = f"test_{uuid4().hex[:8]}"
+    # -------------------------------------------------------------------------
+    # Persist / Ensure Video record in PostgreSQL
+    # -------------------------------------------------------------------------
+    video_id = f"test_{Path(video_path.name).stem.lower().replace(' ', '_')}"
     video_model = Video(
         id=video_id,
         filename=video_path.name,
@@ -142,11 +153,29 @@ def run_pipeline(
         height=metadata.height,
         fps=metadata.fps,
     )
+    try:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            vid_repo = VideoRepository(session)
+            existing = vid_repo.get(video_id)
+            if existing is None:
+                vid_repo.add(video_model)
+            else:
+                existing.filename = video_model.filename
+                existing.storage_path = video_model.storage_path
+                existing.duration = video_model.duration
+                existing.file_size = video_model.file_size
+                existing.width = video_model.width
+                existing.height = video_model.height
+                existing.fps = video_model.fps
+                session.commit()
+    except Exception as exc:
+        print(f"  -> Warning: Database video registration encountered: {exc}")
 
     # -------------------------------------------------------------------------
     # Milestone 2: Frame Processing & Sampling
     # -------------------------------------------------------------------------
-    print("\n[Stage 2/8] Sampling and Processing Frames (Milestone 2)...")
+    print("\n[Stage 2/9] Sampling and Processing Frames (Milestone 2)...")
     s2_start = time.perf_counter()
     frame_artifacts: list[FrameArtifact] = []
     timestamped_frames: list[TimestampedFrame] = []
@@ -185,7 +214,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 3: Audio Extraction
     # -------------------------------------------------------------------------
-    print("\n[Stage 3/8] Extracting Audio Track (Milestone 3)...")
+    print("\n[Stage 3/9] Extracting Audio Track (Milestone 3)...")
     s3_start = time.perf_counter()
     audio_artifact: AudioArtifact | None = None
     try:
@@ -214,7 +243,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 4: YOLO VisionAnalyzer
     # -------------------------------------------------------------------------
-    print("\n[Stage 4/8] Running YOLO VisionAnalyzer (Milestone 4)...")
+    print("\n[Stage 4/9] Running YOLO VisionAnalyzer (Milestone 4)...")
     s4_start = time.perf_counter()
     detections: list[VisualDetection] = []
     try:
@@ -243,7 +272,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 5: Whisper Transcriber
     # -------------------------------------------------------------------------
-    print("\n[Stage 5/8] Running Whisper Transcriber (Milestone 5)...")
+    print("\n[Stage 5/9] Running Whisper Transcriber (Milestone 5)...")
     s5_start = time.perf_counter()
     transcript_segments: list[TranscriptSegment] = []
     try:
@@ -267,7 +296,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 6: Transformer TextModerator
     # -------------------------------------------------------------------------
-    print("\n[Stage 6/8] Running Transformer TextModerator (Milestone 6)...")
+    print("\n[Stage 6/9] Running Transformer TextModerator (Milestone 6)...")
     s6_start = time.perf_counter()
     text_signals: list[TextModerationSignal] = []
     try:
@@ -291,7 +320,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 7: Qwen 2.5 VL ContextAnalyzer
     # -------------------------------------------------------------------------
-    print("\n[Stage 7/8] Running Qwen 2.5 VL Multimodal ContextAnalyzer (Milestone 7)...")
+    print("\n[Stage 7/9] Running Qwen 2.5 VL Multimodal ContextAnalyzer (Milestone 7)...")
     s7_start = time.perf_counter()
     interpretation: ContextualInterpretation | None = None
     try:
@@ -322,7 +351,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 8: Moderation Engine Decision & Risk Assessment
     # -------------------------------------------------------------------------
-    print("\n[Stage 8/8] Running Moderation Engine Evaluation (Milestone 8)...")
+    print("\n[Stage 8/9] Running Moderation Engine Evaluation (Milestone 8)...")
     s8_start = time.perf_counter()
     moderation_result: ModerationResult | None = None
     try:
@@ -361,13 +390,63 @@ def run_pipeline(
         print(f"  -> STATUS: FAILED ({exc})")
         return False
 
+    # -------------------------------------------------------------------------
+    # Milestone 9: PostgreSQL Persistence & Structured Report Generation
+    # -------------------------------------------------------------------------
+    print("\n[Stage 9/9] Persisting to PostgreSQL & Generating Report (Milestone 9)...")
+    s9_start = time.perf_counter()
+    report = None
+    try:
+        session_factory = get_session_factory()
+        with session_factory() as session:
+            repository = ModerationRepository(session)
+            persistence_service = ModerationPersistenceService(repository)
+            persistence_service.persist_moderation_run(
+                video_id=video_id,
+                result=moderation_result,
+                transcripts=transcript_segments,
+                detections=detections,
+                text_signals=text_signals,
+                context=interpretation,
+            )
+            report_service = ModerationReportService(repository)
+            report = report_service.get_moderation_report(video_id)
+
+        s9_time = time.perf_counter() - s9_start
+        stage_results["9. Persistence & Reporting"] = {"success": True, "time": s9_time}
+        print(f"  -> STATUS: SUCCESS (took {s9_time:.4f}s)")
+        print("\n" + "=" * 50)
+        print("PERSISTED STRUCTURED MODERATION REPORT (MILESTONE 9):")
+        print("=" * 50)
+        print(f"  Report Video ID:     {report.video_id}")
+        print(f"  Filename:            {report.filename}")
+        print(f"  Decision:            {report.decision.value}")
+        print(f"  Risk Level:          {report.risk_level.value}")
+        print(f"  Risk Score:          {report.risk_score:.4f}")
+        print(f"  Overall Confidence:  {report.overall_confidence:.4f}")
+        print(f"  Detected Categories: {report.detected_categories}")
+        print(f"  Findings Count:      {len(report.findings)}")
+        for idx, f in enumerate(report.findings):
+            print(f"    [Finding {idx+1}] Category: {f.category} | Conf: {f.confidence:.2f} | Time: [{f.start_timestamp}s - {f.end_timestamp}s]")
+            print(f"                     Explanation: {f.explanation}")
+            print(f"                     Evidence Refs: {f.evidence_references}")
+        print(f"  Traceable Evidence:  {len(report.evidence)} items")
+        print(f"  Transcripts:         {len(report.transcripts)} segments")
+        print(f"  Explanation:         {report.explanation}")
+        print("=" * 50)
+    except Exception as exc:
+        s9_time = time.perf_counter() - s9_start
+        stage_results["9. Persistence & Reporting"] = {"success": False, "time": s9_time}
+        print(f"  -> STATUS: FAILED ({exc})")
+        return False
+
     total_time = time.perf_counter() - overall_start_time
 
     # -------------------------------------------------------------------------
     # Final Pipeline Summary
     # -------------------------------------------------------------------------
     print("\n" + "=" * 70)
-    print("PIPELINE EXECUTION SUMMARY (M1 - M8):")
+    print("PIPELINE EXECUTION SUMMARY (M1 - M9):")
     print("=" * 70)
     all_succeeded = all(bool(res.get("success")) for res in stage_results.values())
 
@@ -383,7 +462,7 @@ def run_pipeline(
         print("\n  Warnings encountered:")
         for w in warnings:
             print(f"    - {w}")
-    print(f"  End-to-End M1-M8 Integration:  {'CONFIRMED OPERATIONAL' if all_succeeded else 'INCOMPLETE'}")
+    print(f"  End-to-End M1-M9 Integration:  {'CONFIRMED OPERATIONAL' if all_succeeded else 'INCOMPLETE'}")
     print("=" * 70)
 
     return all_succeeded
