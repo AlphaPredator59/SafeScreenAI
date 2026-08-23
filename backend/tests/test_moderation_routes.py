@@ -157,3 +157,38 @@ def test_get_evidence_endpoint_missing_video_returns_404(client: TestClient) -> 
     response = client.get("/api/v1/videos/non_existent_vid/evidence")
     assert response.status_code == 404
     assert response.json()["detail"] == "Video not found."
+
+
+def test_video_id_validation_rejects_nul_byte(client: TestClient) -> None:
+    """Malformed video IDs containing NUL bytes return HTTP 400 Bad Request."""
+    for endpoint_suffix in ["", "/status", "/moderation", "/evidence"]:
+        response = client.get(f"/api/v1/videos/null%00byte{endpoint_suffix}")
+        assert response.status_code == 400
+        assert "Invalid video ID format" in response.json()["detail"]
+
+
+def test_video_id_validation_rejects_spaces(client: TestClient) -> None:
+    """Malformed video IDs containing spaces return HTTP 400 Bad Request."""
+    for endpoint_suffix in ["", "/status", "/moderation", "/evidence"]:
+        response = client.get(f"/api/v1/videos/invalid%20id%20with%20spaces{endpoint_suffix}")
+        assert response.status_code == 400
+        assert "Invalid video ID format" in response.json()["detail"]
+
+
+def test_video_id_validation_rejects_path_traversal(client: TestClient) -> None:
+    """Malformed video IDs containing invalid characters (dots, special chars, traversal patterns) return HTTP 400 Bad Request."""
+    invalid_ids = ["invalid..id", "invalid.path", "inv@lid", "invalid$id", "invalid!id", "invalid*id"]
+    for inv_id in invalid_ids:
+        for endpoint_suffix in ["", "/status", "/moderation", "/evidence"]:
+            response = client.get(f"/api/v1/videos/{inv_id}{endpoint_suffix}")
+            assert response.status_code == 400
+            assert "Invalid video ID format" in response.json()["detail"]
+
+
+def test_video_id_validation_accepts_valid_id_and_returns_404_for_unknown(client: TestClient) -> None:
+    """Syntactically valid video IDs pass validation and return HTTP 404 if not found."""
+    valid_unknown_id = "valid-video_id-12345"
+    for endpoint_suffix in ["", "/status", "/moderation", "/evidence"]:
+        response = client.get(f"/api/v1/videos/{valid_unknown_id}{endpoint_suffix}")
+        assert response.status_code == 404
+        assert "Video not found" in response.json()["detail"]

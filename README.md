@@ -215,6 +215,30 @@ Sample JSON response:
 }
 ```
 
+## Benchmark Evaluation & Quality Analysis (Milestone 10)
+
+Milestone 10 introduces a systematic evaluation, benchmarking, and error analysis framework to assess moderation decision accuracy, cross-modal disagreements, per-stage latencies, and ablation dynamics.
+
+- **Evaluation Dataset (`evaluation/dataset.json`)**:
+  - Represents 12 distinct moderation scenarios (benign cooking, shooting range, physical assault, ambiguous weapons, sports, educational demos, toxic speech, audio-only threats, silent violence, and neutral scenes).
+  - Maintains strict ground-truth separation across expected context, expected decision, expected risk band, and expected policy categories.
+  - Transparently distinguishes between confirmed available test media and placeholder scenarios.
+- **Evaluation Runner (`scripts/run_evaluation.py`)**:
+  - Executes benchmarks across dataset samples using the real M1–M9 pipeline without modifying model weights.
+  - Supports modality ablation studies (`full`, `visual_qwen`, `visual_audio`, `visual_only`).
+  - Exports structured artifacts into `evaluation/`:
+    - `results.json`: Detailed sample-level prediction records.
+    - `metrics.json`: Serialized decision, context, policy, disagreement, and latency metrics.
+    - `summary.md`: Human-readable benchmark report with confusion matrices and ablation comparisons.
+    - `errors.md`: Structured root-cause error diagnostics.
+
+### Running Benchmark Evaluations & Ablations
+
+```powershell
+# Run benchmark evaluation on available test videos with ablation analysis
+python scripts/run_evaluation.py --ai-mode real --device cpu --ablations
+```
+
 ## Running the End-to-End Pipeline
 
 Run all 9 stages (M1–M9) against real local models and PostgreSQL:
@@ -222,6 +246,9 @@ Run all 9 stages (M1–M9) against real local models and PostgreSQL:
 ```powershell
 # Run on benign cooking video
 python scripts/test_video_pipeline.py --video "Test Videos/Cooking.mp4"
+
+# Run on shooting range video
+python scripts/test_video_pipeline.py --video "Test Videos/Shooting Range.mp4"
 
 # Run on threatening/violence altercation video
 python scripts/test_video_pipeline.py --video "Test Videos/Slap.mp4"
@@ -238,13 +265,15 @@ backend/
     schemas/      Pydantic request and response schemas (health, video, moderation)
     services/
       ai/         AI contracts, protocols, mocks, YOLO/Whisper/Transformer/Qwen adapters, and factory
+      evaluation/ Dataset schemas, loaders, metrics calculator, runner, and report generator
       moderation/ ModerationEngine, severity configs, evidence traceability, repository, persistence, reporting
       video/      Video ingestion, validation, metadata, processing, and repository
     main.py       Application factory and FastAPI entry point
-  tests/          Unit and integration tests (migrations, domain, ingestion, processing, AI adapters, context engine, moderation engine, persistence, API routes)
+  tests/          Unit and integration tests (migrations, domain, ingestion, processing, AI adapters, context engine, moderation engine, persistence, API routes, evaluation)
+evaluation/       Benchmark dataset, metrics JSON, summary markdown, and error diagnostics
 storage/          Local runtime storage (ignored except for .gitkeep)
 migrations/       Alembic migration environment and revision history
-scripts/          Pipeline evaluation and smoke test scripts
+scripts/          Pipeline evaluation, benchmark runner, and smoke test scripts
 ```
 
 ## Environment variables

@@ -1,0 +1,302 @@
+{
+  "Cooking.mp4": {
+    "runs": [
+      {
+        "run": 1,
+        "decision": "APPROVED",
+        "risk_level": "LOW",
+        "risk_score": 0.0,
+        "confidence": 0.6614,
+        "context": "Cooking",
+        "yolo_classes": [
+          "bowl",
+          "broccoli",
+          "dining table",
+          "fork",
+          "knife",
+          "oven",
+          "person",
+          "spoon"
+        ],
+        "policy_categories": [],
+        "transcripts": [],
+        "total_latency": 35.205,
+        "stage_latencies": {
+          "metadata": 0.1792,
+          "frame_processing": 4.7186,
+          "vision_yolo": 3.7198,
+          "audio_extraction": 0.0647,
+          "transcription_whisper": 0.0,
+          "text_moderation": 0.0,
+          "context_qwen": 26.5154,
+          "moderation_engine": 0.0003
+        }
+      },
+      {
+        "run": 2,
+        "decision": "APPROVED",
+        "risk_level": "LOW",
+        "risk_score": 0.0,
+        "confidence": 0.6614,
+        "context": "Cooking",
+        "yolo_classes": [
+          "bowl",
+          "broccoli",
+          "dining table",
+          "fork",
+          "knife",
+          "oven",
+          "person",
+          "spoon"
+        ],
+        "policy_categories": [],
+        "transcripts": [],
+        "total_latency": 18.715,
+        "stage_latencies": {
+          "metadata": 0.1308,
+          "frame_processing": 5.7919,
+          "vision_yolo": 0.8551,
+          "audio_extraction": 0.0866,
+          "transcription_whisper": 0.0,
+          "text_moderation": 0.0,
+          "context_qwen": 11.8497,
+          "moderation_engine": 0.0004
+        }
+      },
+      {
+        "run": 3,
+        "decision": "APPROVED",
+        "risk_level": "LOW",
+        "risk_score": 0.0,
+        "confidence": 0.6614,
+        "context": "Cooking",
+        "yolo_classes": [
+          "bowl",
+          "broccoli",
+          "dining table",
+          "fork",
+          "knife",
+          "oven",
+          "person",
+          "spoon"
+        ],
+        "policy_categories": [],
+        "transcripts": [],
+        "total_latency": 18.6771,
+        "stage_latencies": {
+          "metadata": 0.137,
+          "frame_processing": 5.7287,
+          "vision_yolo": 1.0184,
+          "audio_extraction": 0.0875,
+          "transcription_whisper": 0.0,
+          "text_moderation": 0.0,
+          "context_qwen": 11.7048,
+          "moderation_engine": 0.0003
+        }
+      }
+    ],
+    "cold_latency": 35.205,
+    "warm_latencies": [
+      18.715,
+      18.6771
+    ],
+    "mean_latency": 24.199033333333333,
+    "median_latency": 18.715,
+    "variance": 90.84883580333332
+  },
+  "Shooting Range.mp4": {
+    "runs": [
+      {
+        "run": 1,
+        "decision": "APPROVED",
+        "risk_level": "LOW",
+        "risk_score": 0.0,
+        "confidence": 0.585,
+        "context": "gun range practice",
+        "yolo_classes": [
+          "apple",
+          "banana",
+          "cell phone",
+          "person"
+        ],
+        "policy_categories": [],
+        "transcripts": [],
+        "total_latency": 15.8714,
+        "stage_latencies": {
+          "metadata": 0.0807,
+          "frame_processing": 0.3515,
+          "vision_yolo": 0.3852,
+          "audio_extraction": 0.2032,
+          "transcription_whisper": 1.6736,
+          "text_moderation": 0.0,
+          "context_qwen": 13.1766,
+          "moderation_engine": 0.0002
+        }
+      },
+      {
+        "run": 2,
+        "decision": "APPROVED",
+        "risk_level": "LOW",
+        "risk_score": 0.0,
+        "confidence": 0.5803,
+        "context": "gun range practice",
+        "yolo_classes": [
+          "apple",
+          "banana",
+          "cell phone",
+          "person"
+        ],
+        "policy_categories": [],
+        "transcripts": [],
+        "total_latency": 11.491,
+        "stage_latencies": {
+          "metadata": 0.0693,
+          "frame_processing": 0.3448,
+          "vision_yolo": 0.365,
+          "audio_extraction": 0.113,
+          "transcription_whisper": 0.7854,
+          "text_moderation": 0.0,
+          "context_qwen": 9.8128,
+          "moderation_engine": 0.0002
+        }
+      },
+      {
+        "run": 3,
+        "decision": "APPROVED",
+        "risk_level": "LOW",
+        "risk_score": 0.0,
+        "confidence": 0.585,
+        "context": "gun range practice",
+        "yolo_classes": [
+          "apple",
+          "banana",
+          "cell phone",
+          "person"
+        ],
+        "policy_categories": [],
+        "transcripts": [],
+        "total_latency": 11.9443,
+        "stage_latencies": {
+          "metadata": 0.0734,
+          "frame_processing": 0.3518,
+          "vision_yolo": 0.4145,
+          "audio_extraction": 0.1268,
+          "transcription_whisper": 0.9018,
+          "text_moderation": 0.0,
+          "context_qwen": 10.0754,
+          "moderation_engine": 0.0002
+        }
+      }
+    ],
+    "cold_latency": 15.8714,
+    "warm_latencies": [
+      11.491,
+      11.9443
+    ],
+    "mean_latency": 13.102233333333333,
+    "median_latency": 11.9443,
+    "variance": 5.802583243333332
+  },
+  "Slap.mp4": {
+    "runs": [
+      {
+        "run": 1,
+        "decision": "REVIEW_REQUIRED",
+        "risk_level": "HIGH",
+        "risk_score": 0.765,
+        "confidence": 0.8261,
+        "context": "threatening interaction",
+        "yolo_classes": [
+          "cell phone",
+          "person",
+          "toothbrush"
+        ],
+        "policy_categories": [
+          "threats"
+        ],
+        "transcripts": [
+          "you"
+        ],
+        "total_latency": 27.4803,
+        "stage_latencies": {
+          "metadata": 0.0859,
+          "frame_processing": 3.1426,
+          "vision_yolo": 1.7458,
+          "audio_extraction": 0.1387,
+          "transcription_whisper": 1.0485,
+          "text_moderation": 5.3612,
+          "context_qwen": 15.9564,
+          "moderation_engine": 0.0007
+        }
+      },
+      {
+        "run": 2,
+        "decision": "REVIEW_REQUIRED",
+        "risk_level": "HIGH",
+        "risk_score": 0.765,
+        "confidence": 0.8261,
+        "context": "threatening interaction",
+        "yolo_classes": [
+          "cell phone",
+          "person",
+          "toothbrush"
+        ],
+        "policy_categories": [
+          "threats"
+        ],
+        "transcripts": [
+          "you"
+        ],
+        "total_latency": 22.2813,
+        "stage_latencies": {
+          "metadata": 0.1039,
+          "frame_processing": 5.5742,
+          "vision_yolo": 1.787,
+          "audio_extraction": 0.1354,
+          "transcription_whisper": 1.0321,
+          "text_moderation": 2.2597,
+          "context_qwen": 11.3878,
+          "moderation_engine": 0.0005
+        }
+      },
+      {
+        "run": 3,
+        "decision": "REVIEW_REQUIRED",
+        "risk_level": "HIGH",
+        "risk_score": 0.8075,
+        "confidence": 0.8286,
+        "context": "threatening interaction",
+        "yolo_classes": [
+          "cell phone",
+          "person",
+          "toothbrush"
+        ],
+        "policy_categories": [
+          "threats"
+        ],
+        "transcripts": [
+          "you"
+        ],
+        "total_latency": 20.0047,
+        "stage_latencies": {
+          "metadata": 0.1002,
+          "frame_processing": 3.232,
+          "vision_yolo": 1.7714,
+          "audio_extraction": 0.1289,
+          "transcription_whisper": 1.054,
+          "text_moderation": 2.1918,
+          "context_qwen": 11.5252,
+          "moderation_engine": 0.0006
+        }
+      }
+    ],
+    "cold_latency": 27.4803,
+    "warm_latencies": [
+      22.2813,
+      20.0047
+    ],
+    "mean_latency": 23.255433333333333,
+    "median_latency": 22.2813,
+    "variance": 14.68285065333333
+  }
+}

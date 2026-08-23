@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.api.validators import validate_video_id
 from app.core.config import get_settings
 from app.db.database import get_db_session
 from app.schemas.video import VideoResponse, VideoStatusResponse, VideoUploadResponse
@@ -55,7 +56,10 @@ def get_video_or_404(video_id: str, repository: VideoRepository):
 
 
 @router.get("/{video_id}", response_model=VideoResponse)
-def get_video(video_id: str, repository: Annotated[VideoRepository, Depends(get_video_repository)]) -> VideoResponse:
+def get_video(
+    video_id: Annotated[str, Depends(validate_video_id)],
+    repository: Annotated[VideoRepository, Depends(get_video_repository)],
+) -> VideoResponse:
     """Return stored public metadata and processing status for a video."""
     video = get_video_or_404(video_id, repository)
     return VideoResponse(video_id=video.id, status=video.status, filename=video.filename, duration=video.duration,
@@ -64,7 +68,10 @@ def get_video(video_id: str, repository: Annotated[VideoRepository, Depends(get_
 
 
 @router.get("/{video_id}/status", response_model=VideoStatusResponse)
-def get_video_status(video_id: str, repository: Annotated[VideoRepository, Depends(get_video_repository)]) -> VideoStatusResponse:
+def get_video_status(
+    video_id: Annotated[str, Depends(validate_video_id)],
+    repository: Annotated[VideoRepository, Depends(get_video_repository)],
+) -> VideoStatusResponse:
     """Return the current persisted processing state for a video."""
     video = get_video_or_404(video_id, repository)
     return VideoStatusResponse(video_id=video.id, status=video.status)

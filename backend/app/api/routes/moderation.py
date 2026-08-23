@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.validators import validate_video_id
 from app.db.database import get_db_session
 from app.schemas.moderation import EvidenceListResponse, ModerationReportResponse
 from app.services.moderation.reporting import ModerationReportService
@@ -35,7 +36,7 @@ def get_moderation_repository(
     summary="Retrieve full moderation report for a video",
 )
 def get_video_moderation_report(
-    video_id: str,
+    video_id: Annotated[str, Depends(validate_video_id)],
     service: Annotated[ModerationReportService, Depends(get_moderation_report_service)],
     repository: Annotated[ModerationRepository, Depends(get_moderation_repository)],
 ) -> ModerationReportResponse:
@@ -64,7 +65,7 @@ def get_video_moderation_report(
     summary="Retrieve all traceable evidence supporting video moderation",
 )
 def get_video_evidence(
-    video_id: str,
+    video_id: Annotated[str, Depends(validate_video_id)],
     service: Annotated[ModerationReportService, Depends(get_moderation_report_service)],
     repository: Annotated[ModerationRepository, Depends(get_moderation_repository)],
 ) -> EvidenceListResponse:

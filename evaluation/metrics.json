@@ -1,0 +1,216 @@
+{
+  "total_dataset_samples": 12,
+  "available_samples_count": 3,
+  "unavailable_samples_count": 9,
+  "evaluated_samples_count": 3,
+  "is_statistically_representative": false,
+  "statistical_note": "Headline metrics are computed exclusively over available media with verified ground truth. Results from small sample counts are preliminary diagnostics and not statistically representative.",
+  "decision_metrics": {
+    "total": 3,
+    "true_positives": 1,
+    "false_positives": 0,
+    "true_negatives": 2,
+    "false_negatives": 0,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0,
+    "review_rate": 0.3333,
+    "false_positive_rate": 0.0,
+    "false_negative_rate": 0.0
+  },
+  "multiclass_confusion_matrix": {
+    "labels": [
+      "APPROVED",
+      "REVIEW_REQUIRED",
+      "REJECTED"
+    ],
+    "matrix": {
+      "APPROVED": {
+        "APPROVED": 2,
+        "REVIEW_REQUIRED": 0,
+        "REJECTED": 0
+      },
+      "REVIEW_REQUIRED": {
+        "APPROVED": 0,
+        "REVIEW_REQUIRED": 1,
+        "REJECTED": 0
+      },
+      "REJECTED": {
+        "APPROVED": 0,
+        "REVIEW_REQUIRED": 0,
+        "REJECTED": 0
+      }
+    }
+  },
+  "binary_confusion_matrix": {
+    "labels": [
+      "SAFE",
+      "UNSAFE"
+    ],
+    "matrix": {
+      "SAFE": {
+        "SAFE": 2,
+        "UNSAFE": 0
+      },
+      "UNSAFE": {
+        "SAFE": 0,
+        "UNSAFE": 1
+      }
+    }
+  },
+  "context_metrics": {
+    "total_evaluated": 3,
+    "correct_matches": 3,
+    "accuracy": 1.0,
+    "disagreement_count": 1
+  },
+  "policy_category_metrics": {
+    "child_safety": {
+      "category": "child_safety",
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 0
+    },
+    "hate_speech": {
+      "category": "hate_speech",
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 0
+    },
+    "threats": {
+      "category": "threats",
+      "true_positives": 1,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 1
+    },
+    "toxic_language": {
+      "category": "toxic_language",
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 0
+    },
+    "violence": {
+      "category": "violence",
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 0
+    },
+    "weapons": {
+      "category": "weapons",
+      "true_positives": 0,
+      "false_positives": 0,
+      "false_negatives": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1_score": 0.0,
+      "support": 0
+    }
+  },
+  "model_disagreements": [
+    {
+      "sample_id": "scenario_01_cooking",
+      "scenario_name": "Benign cooking with knife",
+      "yolo_categories": [
+        "bowl",
+        "broccoli",
+        "dining table",
+        "fork",
+        "knife",
+        "oven",
+        "person",
+        "spoon"
+      ],
+      "qwen_context": "Cooking",
+      "whisper_text": "",
+      "text_signals": [],
+      "policy_findings": [],
+      "disagreement_type": "YOLO Object vs Benign Context",
+      "description": "YOLO detected potentially hazardous objects ['bowl', 'broccoli', 'dining table', 'fork', 'knife', 'oven', 'person', 'spoon'], while Qwen synthesized benign scenario 'Cooking'.",
+      "resolved_by_context": true,
+      "caused_false_positive": false,
+      "caused_false_negative": false
+    }
+  ],
+  "latency_metrics": {
+    "total_pipeline": {
+      "mean_seconds": 27.8199,
+      "median_seconds": 28.0104,
+      "min_seconds": 18.0531,
+      "max_seconds": 37.3961
+    },
+    "per_stage": {
+      "metadata": {
+        "mean_seconds": 0.1336,
+        "median_seconds": 0.1074,
+        "min_seconds": 0.0962,
+        "max_seconds": 0.1973
+      },
+      "frame_processing": {
+        "mean_seconds": 2.5606,
+        "median_seconds": 3.3019,
+        "min_seconds": 0.3878,
+        "max_seconds": 3.992
+      },
+      "vision_yolo": {
+        "mean_seconds": 1.9742,
+        "median_seconds": 1.7814,
+        "min_seconds": 0.5146,
+        "max_seconds": 3.6266
+      },
+      "audio_extraction": {
+        "mean_seconds": 0.1113,
+        "median_seconds": 0.1343,
+        "min_seconds": 0.0623,
+        "max_seconds": 0.1373
+      },
+      "transcription_whisper": {
+        "mean_seconds": 0.9355,
+        "median_seconds": 1.1125,
+        "min_seconds": 0.0,
+        "max_seconds": 1.6939
+      },
+      "text_moderation": {
+        "mean_seconds": 1.9526,
+        "median_seconds": 0.0,
+        "min_seconds": 0.0,
+        "max_seconds": 5.8578
+      },
+      "context_qwen": {
+        "mean_seconds": 20.1493,
+        "median_seconds": 15.7143,
+        "min_seconds": 15.2225,
+        "max_seconds": 29.511
+      },
+      "moderation_engine": {
+        "mean_seconds": 0.0003,
+        "median_seconds": 0.0003,
+        "min_seconds": 0.0003,
+        "max_seconds": 0.0004
+      }
+    },
+    "hardware_device": "cpu",
+    "sample_count": 3
+  },
+  "errors": []
+}
