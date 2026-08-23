@@ -89,6 +89,12 @@ class WhisperTranscriber:
         if self.language:
             kwargs["language"] = self.language
 
+        # Explicitly set fp16 precision based on target device to avoid Whisper CPU warning
+        if self.device.lower() == "cpu":
+            kwargs["fp16"] = False
+        elif "cuda" in self.device.lower():
+            kwargs["fp16"] = True
+
         try:
             audio_input = self._load_audio_waveform(audio_path)
             result = model.transcribe(audio_input, **kwargs)

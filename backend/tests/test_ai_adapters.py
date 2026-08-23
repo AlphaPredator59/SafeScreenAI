@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -216,6 +217,29 @@ def test_whisper_transcriber_inference_error_raises_ai_error(tmp_path: Path) -> 
     transcriber = WhisperTranscriber(model=BrokenWhisperModel())
     with pytest.raises(AIServiceError, match="Whisper transcription failed"):
         transcriber.transcribe(artifact)
+
+
+def test_whisper_transcriber_precision_flags_for_cpu_and_cuda(tmp_path: Path) -> None:
+    audio_file = tmp_path / "audio.wav"
+    audio_file.write_bytes(b"dummy")
+    artifact = AudioArtifact(audio_available=True, storage_path=audio_file, format="wav", duration=5.0)
+
+    captured_kwargs: list[dict[str, Any]] = []
+
+    class MockWhisperModel:
+        def transcribe(self, path: Any, **kwargs: Any) -> dict[str, Any]:
+            captured_kwargs.append(kwargs)
+            return {"segments": [{"start": 0.0, "end": 1.0, "text": "test"}]}
+
+    # CPU mode must pass fp16=False
+    transcriber_cpu = WhisperTranscriber(device="cpu", model=MockWhisperModel())
+    transcriber_cpu.transcribe(artifact)
+    assert captured_kwargs[-1].get("fp16") is False
+
+    # CUDA mode must pass fp16=True
+    transcriber_cuda = WhisperTranscriber(device="cuda", model=MockWhisperModel())
+    transcriber_cuda.transcribe(artifact)
+    assert captured_kwargs[-1].get("fp16") is True
 
 
 # ---------------------------------------------------------------------------

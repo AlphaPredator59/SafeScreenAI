@@ -108,6 +108,7 @@ AI services adhere to vendor-neutral contracts and Protocol interfaces for visio
 - **Speech-to-Text (`WhisperTranscriber`)**: Uses OpenAI Whisper (default: `tiny`, ~75MB) for speech transcription with segment timestamps. Handles videos without audio streams gracefully.
 - **Text Moderation (`TransformerTextModerator`)**: Uses Hugging Face transformer sequence classification pipelines (default: `unitary/toxic-bert`) to evaluate transcript text and extract policy signals (`TextModerationSignal`).
 - **Context Engine (`QwenContextAnalyzer`)**: Uses local Qwen 2.5 VL 7B (`qwen2.5vl:7b`) via Ollama. Fuses visual detections, video frames, Whisper audio transcripts, and text policy signals into a structured `ContextualInterpretation`.
+- **Moderation Engine (`ModerationEngine`)**: Standalone, deterministic decisioning service that synthesizes multi-modal signals, evaluates category severity, applies contextual mitigation/aggravation rules (e.g. cooking context mitigating knife detections), computes decoupled risk scores vs confidence, and outputs grounded `ModerationResult` assessments.
 - **Deterministic Mocks**: `MockVisionAnalyzer`, `MockTranscriber`, `MockTextModerator`, and `MockContextAnalyzer` provide zero-latency, deterministic execution for local development and CI.
 
 ### Model Execution & Hardware Requirements
@@ -144,9 +145,10 @@ backend/
     schemas/      Pydantic request and response schemas
     services/
       ai/         AI contracts, protocols, mocks, YOLO/Whisper/Transformer/Qwen adapters, and factory
+      moderation/ ModerationEngine, severity configs, evidence traceability, and ModerationResult
       video/      Video ingestion, validation, metadata, processing, and repository
     main.py       Application factory and FastAPI entry point
-  tests/          Unit tests for domain, migrations, ingestion, processing, AI adapters, and context engine
+  tests/          Unit tests for domain, migrations, ingestion, processing, AI adapters, context engine, and moderation engine
 storage/          Local runtime storage (ignored except for .gitkeep)
 migrations/       Alembic migration environment and revision history
 scripts/          Utility and smoke testing scripts
@@ -172,3 +174,9 @@ scripts/          Utility and smoke testing scripts
 | `CONTEXT_MODEL_NAME` | Local Qwen model tag in Ollama | `qwen2.5vl:7b` |
 | `OLLAMA_BASE_URL` | Ollama HTTP endpoint URL | `http://127.0.0.1:11434` |
 | `CONTEXT_TIMEOUT_SECONDS` | Timeout in seconds for Qwen VLM generation | `120.0` |
+| `MODERATION_LOW_RISK_THRESHOLD` | Risk score bound for LOW risk band | `0.30` |
+| `MODERATION_MEDIUM_RISK_THRESHOLD` | Risk score bound for MEDIUM risk band | `0.60` |
+| `MODERATION_HIGH_RISK_THRESHOLD` | Risk score bound for HIGH/CRITICAL risk band | `0.85` |
+| `MODERATION_AUTO_REJECT_THRESHOLD` | Threshold above which content is REJECTED | `0.85` |
+| `MODERATION_REVIEW_THRESHOLD` | Threshold above which content is REVIEW_REQUIRED | `0.40` |
+| `MODERATION_MIN_SIGNAL_CONFIDENCE` | Minimum signal confidence considered by engine | `0.30` |

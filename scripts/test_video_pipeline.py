@@ -44,6 +44,7 @@ from app.services.ai.factory import (
     get_transcriber,
     get_vision_analyzer,
 )
+from app.services.moderation import ModerationConfig, ModerationEngine, ModerationResult
 from app.services.video.metadata import VideoMetadata, VideoMetadataService
 from app.services.video.processing import (
     AudioArtifact,
@@ -82,7 +83,7 @@ def run_pipeline(
     interval: float = 1.0,
 ) -> bool:
     print("=" * 70)
-    print("SafeScreen AI — M1-M7 End-to-End Pipeline Evaluation")
+    print("SafeScreen AI — M1-M8 End-to-End Pipeline Evaluation")
     print("=" * 70)
     print(f"Target Video:    {video_path.name}")
     print(f"Absolute Path:   {video_path.resolve()}")
@@ -108,7 +109,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 1: Video Metadata Extraction
     # -------------------------------------------------------------------------
-    print("\n[Stage 1/7] Extracting Video Metadata (Milestone 1)...")
+    print("\n[Stage 1/8] Extracting Video Metadata (Milestone 1)...")
     s1_start = time.perf_counter()
     metadata: VideoMetadata | None = None
     try:
@@ -145,7 +146,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 2: Frame Processing & Sampling
     # -------------------------------------------------------------------------
-    print("\n[Stage 2/7] Sampling and Processing Frames (Milestone 2)...")
+    print("\n[Stage 2/8] Sampling and Processing Frames (Milestone 2)...")
     s2_start = time.perf_counter()
     frame_artifacts: list[FrameArtifact] = []
     timestamped_frames: list[TimestampedFrame] = []
@@ -184,7 +185,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 3: Audio Extraction
     # -------------------------------------------------------------------------
-    print("\n[Stage 3/7] Extracting Audio Track (Milestone 3)...")
+    print("\n[Stage 3/8] Extracting Audio Track (Milestone 3)...")
     s3_start = time.perf_counter()
     audio_artifact: AudioArtifact | None = None
     try:
@@ -213,7 +214,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 4: YOLO VisionAnalyzer
     # -------------------------------------------------------------------------
-    print("\n[Stage 4/7] Running YOLO VisionAnalyzer (Milestone 4)...")
+    print("\n[Stage 4/8] Running YOLO VisionAnalyzer (Milestone 4)...")
     s4_start = time.perf_counter()
     detections: list[VisualDetection] = []
     try:
@@ -242,7 +243,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 5: Whisper Transcriber
     # -------------------------------------------------------------------------
-    print("\n[Stage 5/7] Running Whisper Transcriber (Milestone 5)...")
+    print("\n[Stage 5/8] Running Whisper Transcriber (Milestone 5)...")
     s5_start = time.perf_counter()
     transcript_segments: list[TranscriptSegment] = []
     try:
@@ -266,7 +267,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 6: Transformer TextModerator
     # -------------------------------------------------------------------------
-    print("\n[Stage 6/7] Running Transformer TextModerator (Milestone 6)...")
+    print("\n[Stage 6/8] Running Transformer TextModerator (Milestone 6)...")
     s6_start = time.perf_counter()
     text_signals: list[TextModerationSignal] = []
     try:
@@ -290,7 +291,7 @@ def run_pipeline(
     # -------------------------------------------------------------------------
     # Milestone 7: Qwen 2.5 VL ContextAnalyzer
     # -------------------------------------------------------------------------
-    print("\n[Stage 7/7] Running Qwen 2.5 VL Multimodal ContextAnalyzer (Milestone 7)...")
+    print("\n[Stage 7/8] Running Qwen 2.5 VL Multimodal ContextAnalyzer (Milestone 7)...")
     s7_start = time.perf_counter()
     interpretation: ContextualInterpretation | None = None
     try:
@@ -318,13 +319,55 @@ def run_pipeline(
         print(f"  -> STATUS: FAILED ({exc})")
         return False
 
+    # -------------------------------------------------------------------------
+    # Milestone 8: Moderation Engine Decision & Risk Assessment
+    # -------------------------------------------------------------------------
+    print("\n[Stage 8/8] Running Moderation Engine Evaluation (Milestone 8)...")
+    s8_start = time.perf_counter()
+    moderation_result: ModerationResult | None = None
+    try:
+        mod_config = ModerationConfig(
+            low_risk_threshold=settings.moderation_low_risk_threshold,
+            medium_risk_threshold=settings.moderation_medium_risk_threshold,
+            high_risk_threshold=settings.moderation_high_risk_threshold,
+            auto_reject_threshold=settings.moderation_auto_reject_threshold,
+            review_threshold=settings.moderation_review_threshold,
+            min_signal_confidence=settings.moderation_min_signal_confidence,
+        )
+        engine = ModerationEngine(config=mod_config)
+        moderation_result = engine.evaluate(
+            detections=detections,
+            transcripts=transcript_segments,
+            text_signals=text_signals,
+            context=interpretation,
+        )
+        s8_time = time.perf_counter() - s8_start
+        stage_results["8. Moderation Engine (Decision)"] = {"success": True, "time": s8_time}
+        print(f"  -> STATUS: SUCCESS (took {s8_time:.4f}s)")
+        print("\n" + "=" * 50)
+        print("FINAL MODERATION ASSESSMENT (MILESTONE 8):")
+        print("=" * 50)
+        print(f"  Decision:            {moderation_result.decision.value}")
+        print(f"  Risk Level:          {moderation_result.risk_level.value}")
+        print(f"  Risk Score:          {moderation_result.risk_score:.4f}")
+        print(f"  Overall Confidence:  {moderation_result.overall_confidence:.4f}")
+        print(f"  Detected Categories: {list(moderation_result.detected_categories)}")
+        print(f"  Evidence Count:      {len(moderation_result.supporting_evidence)}")
+        print(f"  Explanation:         {moderation_result.explanation}")
+        print("=" * 50)
+    except Exception as exc:
+        s8_time = time.perf_counter() - s8_start
+        stage_results["8. Moderation Engine (Decision)"] = {"success": False, "time": s8_time}
+        print(f"  -> STATUS: FAILED ({exc})")
+        return False
+
     total_time = time.perf_counter() - overall_start_time
 
     # -------------------------------------------------------------------------
     # Final Pipeline Summary
     # -------------------------------------------------------------------------
     print("\n" + "=" * 70)
-    print("PIPELINE EXECUTION SUMMARY (M1 - M7):")
+    print("PIPELINE EXECUTION SUMMARY (M1 - M8):")
     print("=" * 70)
     all_succeeded = all(bool(res.get("success")) for res in stage_results.values())
 
@@ -340,7 +383,7 @@ def run_pipeline(
         print("\n  Warnings encountered:")
         for w in warnings:
             print(f"    - {w}")
-    print(f"  End-to-End M1-M7 Integration:  {'CONFIRMED OPERATIONAL' if all_succeeded else 'INCOMPLETE'}")
+    print(f"  End-to-End M1-M8 Integration:  {'CONFIRMED OPERATIONAL' if all_succeeded else 'INCOMPLETE'}")
     print("=" * 70)
 
     return all_succeeded

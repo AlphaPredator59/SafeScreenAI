@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
+.pytest_cache_dir/
+.pytest_tmp/
 .coverage
 htmlcov/
 

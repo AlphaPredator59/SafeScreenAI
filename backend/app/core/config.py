@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     context_model_name: str = "qwen2.5vl:7b"
     ollama_base_url: str = "http://127.0.0.1:11434"
     context_timeout_seconds: float = 120.0
+    moderation_low_risk_threshold: float = 0.30
+    moderation_medium_risk_threshold: float = 0.60
+    moderation_high_risk_threshold: float = 0.85
+    moderation_auto_reject_threshold: float = 0.85
+    moderation_review_threshold: float = 0.40
+    moderation_min_signal_confidence: float = 0.30
 
 
 @lru_cache
