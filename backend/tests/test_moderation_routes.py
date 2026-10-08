@@ -192,3 +192,63 @@ def test_video_id_validation_accepts_valid_id_and_returns_404_for_unknown(client
         response = client.get(f"/api/v1/videos/{valid_unknown_id}{endpoint_suffix}")
         assert response.status_code == 404
         assert "Video not found" in response.json()["detail"]
+
+
+def test_get_moderation_report_and_evidence_with_content_exceeding_1024_chars(client: TestClient, db_session: Session) -> None:
+    """GET /moderation and /evidence correctly return evidence content > 1024 characters without truncation."""
+    video = Video(
+        id="vid_long_evidence_api",
+        filename="long_evidence.mp4",
+        storage_path="storage/videos/long_evidence.mp4",
+        duration=60.0,
+        file_size=5 * 1024 * 1024,
+        width=1920,
+        height=1080,
+        fps=30.0,
+        status=VideoStatus.PROCESSING,
+    )
+    db_session.add(video)
+    db_session.commit()
+
+    repo = ModerationRepository(db_session)
+    persistence = ModerationPersistenceService(repo)
+
+    long_text = "Comprehensive multimodal synthesized reasoning: " + ("Detailed analysis of temporal interaction. " * 30)
+    assert len(long_text) > 1200
+
+    result = ModerationResult(
+        decision=ModerationDecision.REVIEW_REQUIRED,
+        risk_level=RiskLevel.HIGH,
+        risk_score=0.82,
+        overall_confidence=0.91,
+        detected_categories=("violence",),
+        supporting_evidence=(
+            EvidenceItem(
+                modality="context",
+                category="violence",
+                confidence=0.91,
+                reference="win_0_60",
+                timestamp=5.0,
+                description=long_text,
+            ),
+        ),
+        explanation="Long explanation report test.",
+    )
+    persistence.persist_moderation_run(video_id=video.id, result=result)
+
+    # 1. Verify /moderation route
+    mod_resp = client.get(f"/api/v1/videos/{video.id}/moderation")
+    assert mod_resp.status_code == 200
+    mod_data = mod_resp.json()
+    assert len(mod_data["evidence"]) == 1
+    assert mod_data["evidence"][0]["content"] == long_text
+    assert len(mod_data["evidence"][0]["content"]) == len(long_text)
+
+    # 2. Verify /evidence route
+    ev_resp = client.get(f"/api/v1/videos/{video.id}/evidence")
+    assert ev_resp.status_code == 200
+    ev_data = ev_resp.json()
+    assert ev_data["total_count"] == 1
+    assert ev_data["evidence"][0]["content"] == long_text
+    assert len(ev_data["evidence"][0]["content"]) == len(long_text)
+

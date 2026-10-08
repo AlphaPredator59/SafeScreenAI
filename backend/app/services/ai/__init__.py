@@ -2,6 +2,7 @@
 
 from app.services.ai.contracts import (
     AIServiceError,
+    ContextWindowInterpretation,
     ContextualInterpretation,
     TextModerationSignal,
     TimestampedFrame,
@@ -37,6 +38,7 @@ __all__ = [
     "VisualDetection",
     "TranscriptSegment",
     "TextModerationSignal",
+    "ContextWindowInterpretation",
     "ContextualInterpretation",
     "VisionAnalyzer",
     "Transcriber",

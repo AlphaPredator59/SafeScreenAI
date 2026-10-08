@@ -32,3 +32,6 @@ dist/
 *.onnx
 *.bin
 *.safetensors
+
+#Video files
+Test Videos/

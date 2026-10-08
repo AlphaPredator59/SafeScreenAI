@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     context_model_name: str = "qwen2.5vl:7b"
     ollama_base_url: str = "http://127.0.0.1:11434"
     context_timeout_seconds: float = 120.0
+    context_window_seconds: float = 30.0
+    context_window_overlap_seconds: float = 5.0
+    max_context_windows: int = 15
+    max_context_frames_per_window: int = 3
+    max_detections_per_window: int = 20
+    max_transcript_tokens_per_window: int = 400
+    context_num_ctx: int = 8192
+    context_max_input_tokens: int = 6000
+    context_allow_partial_failures: bool = True
     moderation_low_risk_threshold: float = 0.30
     moderation_medium_risk_threshold: float = 0.60
     moderation_high_risk_threshold: float = 0.85

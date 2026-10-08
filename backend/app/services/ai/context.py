@@ -3,18 +3,36 @@
 import base64
 from collections.abc import Sequence
 import json
+import logging
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from app.services.ai.contracts import (
     AIServiceError,
+    ContextWindowInterpretation,
     ContextualInterpretation,
     TextModerationSignal,
     TimestampedFrame,
     TranscriptSegment,
     VisualDetection,
 )
+from app.services.ai.temporal import (
+    DetectionSummary,
+    TemporalPipelineConfig,
+    TemporalWindow,
+    aggregate_window_interpretations,
+    calculate_video_timeline_duration,
+    compress_visual_detections,
+    enforce_token_budget,
+    format_diagnostics_report,
+    generate_temporal_windows,
+    select_representative_frames,
+    select_window_transcripts,
+)
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are SafeScreen AI's Multimodal Context Analysis Engine.
 Your task is to analyze the situational context and meaning of an uploaded video by synthesizing:
@@ -37,20 +55,36 @@ Guidelines:
 
 
 class QwenContextAnalyzer:
-    """ContextAnalyzer adapter using the local Qwen 2.5 VL multimodal model via Ollama."""
+    """Temporal multimodal ContextAnalyzer adapter using local Qwen 2.5 VL via Ollama."""
 
     def __init__(
         self,
         model_name: str = "qwen2.5vl:7b",
         base_url: str = "http://127.0.0.1:11434",
         timeout_seconds: float = 120.0,
-        max_frames: int = 6,
+        max_frames: int = 3,
+        num_ctx: int = 8192,
+        max_input_tokens: int = 6000,
+        window_seconds: float = 30.0,
+        overlap_seconds: float = 5.0,
+        max_windows: int = 15,
+        max_detections_per_window: int = 20,
+        max_transcript_tokens_per_window: int = 400,
+        allow_partial_failures: bool = False,
         client: Any | None = None,
     ) -> None:
         self.model_name = model_name
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.max_frames = max_frames
+        self.num_ctx = num_ctx
+        self.max_input_tokens = max_input_tokens
+        self.window_seconds = window_seconds
+        self.overlap_seconds = overlap_seconds
+        self.max_windows = max_windows
+        self.max_detections_per_window = max_detections_per_window
+        self.max_transcript_tokens_per_window = max_transcript_tokens_per_window
+        self.allow_partial_failures = allow_partial_failures
         self._client = client
 
     def _get_client(self) -> Any:
@@ -63,35 +97,6 @@ class QwenContextAnalyzer:
             return self._client
         except Exception as error:
             raise AIServiceError(f"Failed to initialize HTTP client for Qwen: {error}") from error
-
-    def _select_key_frames(
-        self,
-        frames: Sequence[TimestampedFrame] | None,
-        detections: Sequence[VisualDetection],
-    ) -> list[TimestampedFrame]:
-        if not frames:
-            return []
-
-        # Find frames that have associated visual detections
-        detection_timestamps = {round(d.timestamp, 1) for d in detections}
-        matched_frames: list[TimestampedFrame] = []
-        other_frames: list[TimestampedFrame] = []
-
-        for f in frames:
-            if round(f.timestamp, 1) in detection_timestamps:
-                matched_frames.append(f)
-            else:
-                other_frames.append(f)
-
-        selected = matched_frames[: self.max_frames]
-        if len(selected) < self.max_frames:
-            remaining = self.max_frames - len(selected)
-            # Sample evenly from remaining frames
-            if other_frames:
-                step = max(1, len(other_frames) // remaining)
-                selected.extend(other_frames[::step][:remaining])
-
-        return selected[: self.max_frames]
 
     def _encode_image(self, path_str: str, max_dimension: int = 768) -> str:
         path = Path(path_str)
@@ -117,55 +122,6 @@ class QwenContextAnalyzer:
             except OSError:
                 return ""
 
-    def _build_user_prompt(
-        self,
-        detections: Sequence[VisualDetection],
-        transcripts: Sequence[TranscriptSegment],
-        signals: Sequence[TextModerationSignal],
-        selected_frames: Sequence[TimestampedFrame],
-    ) -> str:
-        lines = ["[MULTIMODAL TIMELINE EVIDENCE]"]
-
-        # 1. Visual detections
-        lines.append("\n1. Visual Detections (YOLO):")
-        if detections:
-            for d in detections:
-                box_str = f" | Box: {d.metadata.get('box')}" if d.metadata.get("box") else ""
-                lines.append(
-                    f"- [t={d.timestamp:.1f}s] Category: {d.category} | Confidence: {d.confidence:.2f} | Evidence: {d.evidence_reference}{box_str}"
-                )
-        else:
-            lines.append("- None detected.")
-
-        # 2. Audio transcripts
-        lines.append("\n2. Audio Transcript (Whisper):")
-        if transcripts:
-            for idx, t in enumerate(transcripts):
-                lines.append(f"- [{t.start:.1f}s - {t.end:.1f}s] (transcript:{idx}) \"{t.text}\"")
-        else:
-            lines.append("- No spoken dialogue extracted.")
-
-        # 3. Text policy signals
-        lines.append("\n3. Text Moderation Signals:")
-        if signals:
-            for s in signals:
-                lines.append(
-                    f"- [{s.start_timestamp:.1f}s - {s.end_timestamp:.1f}s] Category: {s.category} | Confidence: {s.confidence:.2f} | Text: \"{s.source_text}\""
-                )
-        else:
-            lines.append("- No policy violations detected in text.")
-
-        # 4. Attached frame references
-        if selected_frames:
-            lines.append("\n4. Attached Frame Timestamps:")
-            for f in selected_frames:
-                lines.append(f"- Frame {f.frame_id} at {f.timestamp:.1f}s")
-
-        lines.append(
-            "\nPlease evaluate the situational context and provide your interpretation as valid JSON with keys: category, confidence, reasoning, evidence_references."
-        )
-        return "\n".join(lines)
-
     @staticmethod
     def _parse_confidence(val: Any) -> float:
         if isinstance(val, (int, float)):
@@ -185,45 +141,48 @@ class QwenContextAnalyzer:
                 pass
         return 0.8  # Default sensible confidence if unspecified
 
-    def analyze(
+    def _analyze_single_window(
         self,
-        detections: Sequence[VisualDetection],
-        transcripts: Sequence[TranscriptSegment],
-        signals: Sequence[TextModerationSignal],
-        frames: Sequence[TimestampedFrame] | None = None,
-    ) -> ContextualInterpretation:
-        """Analyze multimodal video signals and return contextual interpretation."""
-        # Handle empty inputs gracefully
-        if not detections and not transcripts and not signals and not frames:
-            return ContextualInterpretation(
-                category="neutral_scene",
-                confidence=1.0,
-                reasoning="No visual objects, spoken dialogue, or text signals were detected in the media.",
-                evidence_references=(),
-            )
-
+        window: TemporalWindow,
+        summaries: list[DetectionSummary],
+        transcripts: list[TranscriptSegment],
+        signals: list[TextModerationSignal],
+        frames: list[TimestampedFrame],
+        config: TemporalPipelineConfig,
+    ) -> tuple[ContextWindowInterpretation, int]:
+        """Send a single bounded temporal window to Qwen and parse the interpretation."""
         client = self._get_client()
-        selected_frames = self._select_key_frames(frames, detections)
 
         # Encode frame images
         base64_images: list[str] = []
-        for frame in selected_frames:
+        for frame in frames:
             encoded = self._encode_image(frame.storage_path)
             if encoded:
                 base64_images.append(encoded)
 
-        user_content = self._build_user_prompt(detections, transcripts, signals, selected_frames)
+        # Proactively enforce token budget
+        user_content, active_images, est_tokens = enforce_token_budget(
+            window=window,
+            summaries=summaries,
+            transcripts=transcripts,
+            signals=signals,
+            frames=frames,
+            encoded_images=base64_images,
+            config=config,
+        )
 
+        effective_num_ctx = config.num_ctx if (config and getattr(config, "num_ctx", None)) else self.num_ctx
         payload: dict[str, Any] = {
             "model": self.model_name,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content, "images": base64_images},
+                {"role": "user", "content": user_content, "images": active_images},
             ],
             "format": "json",
             "stream": False,
-            "options": {"temperature": 0.1, "num_ctx": 8192, "num_predict": 1024},
+            "options": {"temperature": 0.1, "num_ctx": effective_num_ctx, "num_predict": 1024},
         }
+
 
         try:
             response = client.post(f"{self.base_url}/api/chat", json=payload)
@@ -233,13 +192,40 @@ class QwenContextAnalyzer:
                 )
             res_data = response.json()
         except Exception as error:
-            if isinstance(error, AIServiceError):
-                raise
-            raise AIServiceError(f"Failed to communicate with Qwen context model: {error}") from error
+            if not self.allow_partial_failures:
+                if isinstance(error, AIServiceError):
+                    raise
+                raise AIServiceError(f"Failed to communicate with Qwen context model: {error}") from error
+
+            # Gracefully handle single-window failure in resilient mode
+            logger.warning("Qwen context request failed for window [%.1f-%.1f]: %s", window.start_timestamp, window.end_timestamp, error)
+            fallback_refs = tuple(
+                [f.frame_id for f in frames]
+                + [ref for s in summaries for ref in s.key_references]
+            )
+            return ContextWindowInterpretation(
+                start_timestamp=window.start_timestamp,
+                end_timestamp=window.end_timestamp,
+                category="inconclusive",
+                confidence=0.5,
+                reasoning=f"Context request failed: {error}",
+                evidence_references=fallback_refs,
+                status="failed",
+            ), est_tokens
 
         raw_content = res_data.get("message", {}).get("content", "")
         if not raw_content:
-            raise AIServiceError("Empty response received from Qwen context model.")
+            if not self.allow_partial_failures:
+                raise AIServiceError("Empty response received from Qwen context model.")
+            return ContextWindowInterpretation(
+                start_timestamp=window.start_timestamp,
+                end_timestamp=window.end_timestamp,
+                category="inconclusive",
+                confidence=0.5,
+                reasoning="Empty response received from Qwen context model.",
+                evidence_references=(),
+                status="failed",
+            ), est_tokens
 
         # Clean markdown wrappers if present
         clean_json = raw_content.strip()
@@ -251,11 +237,11 @@ class QwenContextAnalyzer:
         try:
             parsed = json.loads(clean_json)
         except Exception:
-            # Resilient fallback extraction if JSON was slightly truncated
+            # Resilient regex fallback extraction
             cat_match = re.search(r'"category"\s*:\s*"([^"]+)"', raw_content)
             conf_match = re.search(r'"confidence"\s*:\s*([0-9.]+)', raw_content)
             reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)', raw_content)
-            refs_match = re.findall(r'"(frame_[a-zA-Z0-9_]+)"', raw_content)
+            refs_match = re.findall(r'"(frame_[a-zA-Z0-9_]+|transcript:[0-9]+)"', raw_content)
             if cat_match:
                 parsed = {
                     "category": cat_match.group(1),
@@ -264,7 +250,17 @@ class QwenContextAnalyzer:
                     "evidence_references": refs_match,
                 }
             else:
-                raise AIServiceError(f"Failed to parse Qwen JSON response. Raw content: {raw_content[:200]}")
+                if not self.allow_partial_failures:
+                    raise AIServiceError(f"Failed to parse Qwen JSON response. Raw content: {raw_content[:200]}")
+                return ContextWindowInterpretation(
+                    start_timestamp=window.start_timestamp,
+                    end_timestamp=window.end_timestamp,
+                    category="inconclusive",
+                    confidence=0.5,
+                    reasoning=f"Malformed JSON from Qwen: {raw_content[:150]}",
+                    evidence_references=(),
+                    status="failed",
+                ), est_tokens
 
         category = str(parsed.get("category", "unspecified_context")).strip()
         confidence = self._parse_confidence(parsed.get("confidence", 0.8))
@@ -276,12 +272,133 @@ class QwenContextAnalyzer:
         elif isinstance(raw_refs, str) and raw_refs.strip():
             evidence_refs = (raw_refs.strip(),)
         else:
-            # Fallback to all detection evidence references
-            evidence_refs = tuple(d.evidence_reference for d in detections)
+            evidence_refs = tuple(ref for s in summaries for ref in s.key_references)
 
-        return ContextualInterpretation(
+        return ContextWindowInterpretation(
+            start_timestamp=window.start_timestamp,
+            end_timestamp=window.end_timestamp,
             category=category,
             confidence=confidence,
             reasoning=reasoning,
             evidence_references=evidence_refs,
+            status="success",
+        ), est_tokens
+
+    def analyze(
+        self,
+        detections: Sequence[VisualDetection],
+        transcripts: Sequence[TranscriptSegment],
+        signals: Sequence[TextModerationSignal],
+        frames: Sequence[TimestampedFrame] | None = None,
+    ) -> ContextualInterpretation:
+        """Analyze multimodal video signals across temporal windows and aggregate context."""
+        start_time = time.perf_counter()
+
+        # Handle empty inputs gracefully
+        if not detections and not transcripts and not signals and not frames:
+            return ContextualInterpretation(
+                category="neutral_scene",
+                confidence=1.0,
+                reasoning="No visual objects, spoken dialogue, or text signals were detected in the media.",
+                evidence_references=(),
+            )
+
+        pipeline_config = TemporalPipelineConfig(
+            window_seconds=self.window_seconds,
+            overlap_seconds=self.overlap_seconds,
+            max_windows=self.max_windows,
+            max_frames_per_window=self.max_frames,
+            max_detections_per_window=self.max_detections_per_window,
+            max_transcript_tokens_per_window=self.max_transcript_tokens_per_window,
+            num_ctx=self.num_ctx,
+            max_input_tokens=self.max_input_tokens,
+            allow_partial_failures=self.allow_partial_failures,
         )
+
+        total_duration = calculate_video_timeline_duration(frames, detections, transcripts, signals)
+        windows = generate_temporal_windows(
+            duration=total_duration,
+            detections=detections,
+            transcripts=transcripts,
+            signals=signals,
+            config=pipeline_config,
+        )
+
+        candidate_windows = [w for w in windows if w.is_candidate]
+        skipped_windows = [w for w in windows if not w.is_candidate]
+
+        window_results: list[ContextWindowInterpretation] = []
+        qwen_requests = 0
+        max_estimated_tokens = 0
+        context_failures = 0
+
+        for win in windows:
+            if not win.is_candidate or win.activity_score == 0.0:
+                # Resolve non-candidate / zero-activity windows without calling Qwen
+                # If there are truly no signals in this window, treat as neutral
+                win_dets = [d for d in detections if win.start_timestamp <= d.timestamp <= win.end_timestamp]
+                win_trans = [t for t in transcripts if t.end >= win.start_timestamp and t.start <= win.end_timestamp]
+                win_sigs = [s for s in signals if s.end_timestamp >= win.start_timestamp and s.start_timestamp <= win.end_timestamp]
+
+                if not win_dets and not win_trans and not win_sigs:
+                    window_results.append(
+                        ContextWindowInterpretation(
+                            start_timestamp=win.start_timestamp,
+                            end_timestamp=win.end_timestamp,
+                            category="neutral_scene",
+                            confidence=1.0,
+                            reasoning="No visual objects, spoken dialogue, or text signals detected in this interval.",
+                            evidence_references=(),
+                            status="skipped",
+                        )
+                    )
+                    continue
+
+            # Active candidate window: prepare bounded evidence
+            rep_frames = select_representative_frames(win, frames, detections, max_frames=self.max_frames)
+            win_summaries = compress_visual_detections(win, detections, max_categories=self.max_detections_per_window)
+            win_transcripts = select_window_transcripts(win, transcripts, max_tokens=self.max_transcript_tokens_per_window)
+            win_signals = [s for s in signals if s.end_timestamp >= win.start_timestamp and s.start_timestamp <= win.end_timestamp]
+
+            qwen_requests += 1
+            win_interp, est_toks = self._analyze_single_window(
+                window=win,
+                summaries=win_summaries,
+                transcripts=win_transcripts,
+                signals=win_signals,
+                frames=rep_frames,
+                config=pipeline_config,
+            )
+            max_estimated_tokens = max(max_estimated_tokens, est_toks)
+            if win_interp.status == "failed":
+                context_failures += 1
+
+            window_results.append(win_interp)
+
+        elapsed = time.perf_counter() - start_time
+
+        # Diagnostics telemetry
+        diagnostics = {
+            "video_duration": round(total_duration, 2),
+            "total_sampled_frames": len(frames or ()),
+            "total_detections": len(detections),
+            "total_transcript_segments": len(transcripts),
+            "candidate_windows": len(candidate_windows),
+            "context_windows_analyzed": qwen_requests,
+            "context_windows_skipped": len(windows) - qwen_requests,
+            "qwen_requests": qwen_requests,
+            "max_estimated_input_tokens": max_estimated_tokens,
+            "context_failures": context_failures,
+            "total_context_analysis_time": round(elapsed, 2),
+        }
+
+        aggregated = aggregate_window_interpretations(
+            window_results=window_results,
+            total_duration=total_duration,
+            diagnostics_meta=diagnostics,
+        )
+
+        diagnostics["primary_category"] = aggregated.category
+        logger.info("\n%s", format_diagnostics_report(diagnostics))
+
+        return aggregated

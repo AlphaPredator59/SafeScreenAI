@@ -75,20 +75,54 @@ class ModerationEngine:
                     description=f"Contextual interpretation: '{context.category}' — {context.reasoning} (conf: {context.confidence:.2f})",
                 )
             )
+            # Add multi-window temporal evidence items if present
+            if len(getattr(context, "window_interpretations", ())) > 1:
+                for win in context.window_interpretations:
+                    ref_str = ",".join(win.evidence_references) if win.evidence_references else f"win_{win.start_timestamp:.0f}_{win.end_timestamp:.0f}"
+                    evidence_items.append(
+                        EvidenceItem(
+                            modality="context",
+                            category=win.category,
+                            confidence=win.confidence,
+                            timestamp=win.start_timestamp,
+                            reference=ref_str,
+                            description=f"Context [{win.start_timestamp:.1f}s - {win.end_timestamp:.1f}s]: '{win.category}' (status: {win.status}) — {win.reasoning}",
+                        )
+                    )
 
         # 3. Context Analysis Classification
         is_benign_context = False
         is_hostile_context = False
         context_category_norm = context.category.strip().lower() if context else ""
         mapped_context_cats: tuple[str, ...] = ()
+        has_failed_window = False
+        if context is not None:
+            has_failed_window = any(w.status == "failed" for w in getattr(context, "window_interpretations", ()))
+        is_inconclusive = (
+            context is not None
+            and (
+                has_failed_window
+                or any(inc in context_category_norm for inc in ("inconclusive", "unknown", "failed", "unverified"))
+            )
+        )
 
-        if context and context.confidence >= self.config.min_signal_confidence:
+        if context and context.confidence >= self.config.min_signal_confidence and not is_inconclusive:
             if any(b in context_category_norm for b in self.config.benign_context_categories):
                 is_benign_context = True
             else:
                 mapped_context_cats = self.config.map_context_category(context.category)
                 if mapped_context_cats or any(h in context_category_norm for h in self.config.hostile_context_categories):
                     is_hostile_context = True
+
+        # Check multi-window interpretations for any hostile window
+        if context is not None:
+            for win in getattr(context, "window_interpretations", ()):
+                if win.status == "success" and win.confidence >= self.config.min_signal_confidence:
+                    win_norm = win.category.strip().lower()
+                    if any(h in win_norm for h in self.config.hostile_context_categories) or self.config.map_context_category(win.category):
+                        is_hostile_context = True
+                        is_benign_context = False
+                        break
 
         # 4. Assess Individual Policy Risks
         signal_risks: list[tuple[str, float, float]] = []  # (policy_category, individual_risk, confidence)
@@ -130,7 +164,7 @@ class ModerationEngine:
                     item_risk *= self.config.hostile_aggravation_multiplier
                 signal_risks.append(("weapons", min(1.0, item_risk), d.confidence))
                 flagged_policy_categories.add("weapons")
-                if not context:
+                if not context or is_inconclusive:
                     has_conflicting_signals = True
 
             elif is_policy_direct:
@@ -204,6 +238,10 @@ class ModerationEngine:
 
             # Conflict: high toxic text vs explicit benign context
             if has_hostile_text and is_benign_context and context and context.confidence >= 0.7:
+                has_conflicting_signals = True
+
+            # Inconclusive/failed context with active signals requires human review
+            if is_inconclusive and (valid_detections or valid_text_signals):
                 has_conflicting_signals = True
 
             risk_score = min(1.0, max(0.0, risk_score))

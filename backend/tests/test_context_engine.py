@@ -154,7 +154,90 @@ def test_qwen_context_analyzer_malformed_json_raises_ai_error() -> None:
 
 
 def test_factory_returns_qwen_context_analyzer_when_real() -> None:
-    settings = Settings(ai_mode="real", context_model_name="qwen2.5vl:7b")
+    settings = Settings(
+        ai_mode="real",
+        context_model_name="qwen2.5vl:7b",
+        context_num_ctx=8192,
+        context_max_input_tokens=6000,
+    )
     analyzer = get_context_analyzer(settings)
     assert isinstance(analyzer, QwenContextAnalyzer)
     assert analyzer.model_name == "qwen2.5vl:7b"
+    assert analyzer.num_ctx == 8192
+    assert analyzer.max_input_tokens == 6000
+
+
+def test_qwen_context_analyzer_propagates_configured_num_ctx_to_ollama_request() -> None:
+    """Verify that settings.context_num_ctx propagates through factory to Ollama request options without hardcoding."""
+    custom_num_ctx = 12288
+    settings = Settings(
+        ai_mode="real",
+        context_num_ctx=custom_num_ctx,
+        context_max_input_tokens=6000,
+    )
+
+    fake_response = FakeResponse(
+        status_code=200,
+        json_data={
+            "message": {
+                "content": '{"category": "custom_scene", "confidence": 0.9, "reasoning": "Context verified.", "evidence_references": ["f_1"]}'
+            }
+        },
+    )
+    client = FakeHttpClient(fake_response)
+
+    analyzer = get_context_analyzer(settings)
+    assert isinstance(analyzer, QwenContextAnalyzer)
+    analyzer._client = client
+
+    detections = [VisualDetection("person", 0.9, 1.0, "f_1")]
+    analyzer.analyze(detections, [], [])
+
+    assert client.last_payload is not None
+    assert "options" in client.last_payload
+    options = client.last_payload["options"]
+    assert options["num_ctx"] == custom_num_ctx
+    assert options["num_ctx"] == settings.context_num_ctx
+    assert options["num_ctx"] != 8192  # Confirms dynamic configuration, not hardcoded
+
+
+def test_qwen_context_analyzer_enforces_token_budget_before_ollama_request() -> None:
+    """Verify that token budget is proactively enforced prior to generating the Ollama request."""
+    configured_num_ctx = 8192
+    configured_max_tokens = 6000
+    settings = Settings(
+        ai_mode="real",
+        context_num_ctx=configured_num_ctx,
+        context_max_input_tokens=configured_max_tokens,
+    )
+
+    fake_response = FakeResponse(
+        status_code=200,
+        json_data={
+            "message": {
+                "content": '{"category": "test_scene", "confidence": 0.85, "reasoning": "Within token budget.", "evidence_references": []}'
+            }
+        },
+    )
+    client = FakeHttpClient(fake_response)
+
+    analyzer = get_context_analyzer(settings)
+    assert isinstance(analyzer, QwenContextAnalyzer)
+    analyzer._client = client
+
+    # Create heavy inputs with many detections and transcripts
+    detections = [VisualDetection(f"object_{i}", 0.8, float(i % 10), f"frame_{i}") for i in range(100)]
+    transcripts = [TranscriptSegment(float(i), float(i + 1), f"Dialogue statement segment number {i} with descriptive text.") for i in range(50)]
+
+    analyzer.analyze(detections, transcripts, [])
+
+    assert client.last_payload is not None
+    assert client.last_payload["options"]["num_ctx"] == configured_num_ctx
+
+    # Verify user message payload content is bounded
+    user_content = client.last_payload["messages"][1]["content"]
+    assert len(user_content) > 0
+    # Words in user prompt should be safely within token budget
+    estimated_text_tokens = int(len(user_content.split()) * 1.35)
+    assert estimated_text_tokens < configured_max_tokens
+

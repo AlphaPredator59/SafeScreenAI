@@ -336,4 +336,8 @@ def test_factory_returns_real_adapters_when_configured() -> None:
     assert isinstance(get_vision_analyzer(settings), YoloVisionAnalyzer)
     assert isinstance(get_transcriber(settings), WhisperTranscriber)
     assert isinstance(get_text_moderator(settings), TransformerTextModerator)
-    assert isinstance(get_context_analyzer(settings), QwenContextAnalyzer)
+    context_analyzer = get_context_analyzer(settings)
+    assert isinstance(context_analyzer, QwenContextAnalyzer)
+    assert context_analyzer.num_ctx == settings.context_num_ctx
+    assert context_analyzer.max_input_tokens == settings.context_max_input_tokens
+

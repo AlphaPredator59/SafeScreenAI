@@ -53,5 +53,14 @@ def get_context_analyzer(settings: Settings | None = None) -> ContextAnalyzer:
             model_name=resolved_settings.context_model_name,
             base_url=resolved_settings.ollama_base_url,
             timeout_seconds=resolved_settings.context_timeout_seconds,
+            max_frames=resolved_settings.max_context_frames_per_window,
+            num_ctx=resolved_settings.context_num_ctx,
+            max_input_tokens=resolved_settings.context_max_input_tokens,
+            window_seconds=resolved_settings.context_window_seconds,
+            overlap_seconds=resolved_settings.context_window_overlap_seconds,
+            max_windows=resolved_settings.max_context_windows,
+            max_detections_per_window=resolved_settings.max_detections_per_window,
+            max_transcript_tokens_per_window=resolved_settings.max_transcript_tokens_per_window,
+            allow_partial_failures=resolved_settings.context_allow_partial_failures,
         )
     return MockContextAnalyzer()

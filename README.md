@@ -1,304 +1,373 @@
-# SafeScreen AI Backend
+# SafeScreen AI — Explainable Context-Aware Video Moderation Backend
 
-Backend foundation for an explainable, context-aware video moderation platform. It provides application configuration, structured logging, a PostgreSQL/SQLAlchemy domain layer, Alembic migrations, and a versioned FastAPI health endpoint. Video ingestion and AI processing are deliberately not implemented yet.
+SafeScreen AI is a modular, explainable backend platform for automated video moderation. It evaluates uploaded videos for potentially harmful or policy-violating content using computer vision, speech-to-text, natural language processing, multimodal contextual analysis, and deterministic risk scoring.
+
+Rather than relying on isolated keyword or object detections—which often produce false positives (e.g., mistaking a culinary kitchen knife for a weapon)—SafeScreen synthesizes multimodal evidence across time, analyzes situational context, and produces grounded, auditable moderation decisions with timestamped evidence references.
+
+---
+
+## Architecture Overview
+
+The system follows a strict layered architecture:
+
+```text
+API Layer (FastAPI)
+       ↓
+Service Layer (Ingestion, Audio/Frame Extractors, AI Adapters, Moderation Engine)
+       ↓
+Business Logic (Temporal Windowing, Token Budgeting, Policy Severity Scoring, Context Mitigation)
+       ↓
+Data Access (SQLAlchemy ORM + PostgreSQL Repositories)
+       ↓
+External Models & Runtime (YOLOv8, Whisper, Toxic-BERT, Ollama Qwen 2.5-VL)
+```
+
+### The 9-Stage Moderation Pipeline
+
+1. **Stage 1 — Metadata Extraction**: Extracts duration, resolution, frame rate, container codec, and audio stream presence via `ffprobe` and OpenCV.
+2. **Stage 2 — Frame Processing**: Samples video frames at configurable intervals (`FRAME_SAMPLING_INTERVAL_SECONDS`, default 1.0s) and persists JPEG artifacts with deterministic IDs.
+3. **Stage 3 — Audio Extraction**: Extracts audio tracks via FFmpeg into normalized 16kHz WAV format. Videos without audio are handled gracefully without pipeline failure.
+4. **Stage 4 — Vision Analysis (YOLO)**: Runs YOLOv8 (`yolov8n.pt`) to detect visual objects, tools, weapons, and persons, capturing bounding boxes, timestamps, and confidence scores.
+5. **Stage 5 — Speech Transcription (Whisper)**: Transcribes spoken dialogue with start/end segment timestamps using OpenAI Whisper (`tiny`).
+6. **Stage 6 — Text Moderation (Transformer)**: Evaluates dialogue segments against safety categories using Hugging Face sequence classification (`unitary/toxic-bert`).
+7. **Stage 7 — Multimodal Context Analysis (Qwen 2.5 VL)**: Employs local Qwen 2.5 VL 7B via Ollama to synthesize situational context across bounded temporal windows (e.g., distinguishing cooking from physical assault).
+8. **Stage 8 — Moderation Engine Evaluation**: Synthesizes all evidence, applies category severity and context mitigation/aggravation rules, decouples model confidence from risk score, and determines the final platform outcome: `APPROVED`, `REVIEW_REQUIRED`, or `REJECTED`.
+9. **Stage 9 — Persistence & Structured Reporting**: Persists the run atomically to PostgreSQL (`moderation_results`, `detections`, `evidence`, `transcript_segments`) and generates structured, audit-ready reports without runtime re-computation.
+
+---
+
+## AI Models & Multimodal Reasoning
+
+| Modality | Default Model | Implementation | Role |
+|---|---|---|---|
+| **Vision** | `yolov8n.pt` | `YoloVisionAnalyzer` (Ultralytics) | Object detection, weapon/tool identification, person tracking |
+| **Speech-to-Text** | `tiny` | `WhisperTranscriber` (OpenAI Whisper) | Spoken dialogue transcription with timestamped segments |
+| **Text Moderation** | `unitary/toxic-bert` | `TransformerTextModerator` (Hugging Face) | Toxic speech, harassment, hate speech, threat classification |
+| **Context Analysis** | `qwen2.5vl:7b` | `QwenContextAnalyzer` (Ollama runtime) | Multimodal situational reasoning & scenario interpretation |
+| **Decision Engine** | Deterministic Engine | `ModerationEngine` | Policy severity weighting, risk calculation, context mitigation |
+
+### Scalable Temporal Context Architecture
+
+To support arbitrarily long multi-minute videos without exceeding the VLM context window:
+- **Temporal Windowing**: The video timeline is divided into bounded 30-second windows with 5-second overlaps.
+- **Activity-Aware Candidate Filtering**: Windows lacking signals or activity are handled deterministically without dispatching expensive VLM queries.
+- **Evidence Summarization**: Visual detections within each window are aggregated into category summaries, bounding boxes, and timestamp spans.
+- **Proactive Token-Budget Enforcement**: Input sizes are estimated before dispatch and bounded to `CONTEXT_MAX_INPUT_TOKENS` (default 6,000 tokens), dynamically pruning extra images if necessary.
+- **Runtime Context Sizing**: Ollama requests explicitly allocate `num_ctx = CONTEXT_NUM_CTX` (default 8,192 tokens) via `/api/chat` options to ensure vision transformer tokens fit comfortably.
+
+---
 
 ## Prerequisites
 
-- Python 3.11 or newer
-- PostgreSQL 16 or newer (needed by later database-backed milestones)
+- **Python**: 3.11 or 3.12
+- **PostgreSQL**: 15 or newer
+- **FFmpeg & FFprobe**: Available on system `PATH`
+- **Ollama**: (Required for real AI mode) running locally with `qwen2.5vl:7b` loaded (`ollama run qwen2.5vl:7b`)
+- **GPU (Optional)**: NVIDIA CUDA GPU recommended for real model inference; CPU execution is fully supported for testing.
 
-## Local setup
+---
 
-Create and activate a virtual environment:
+## Local Setup
+
+### 1. Virtual Environment & Dependencies
 
 ```powershell
-py -3.11 -m venv .venv
+# Create and activate virtual environment
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+# Install project dependencies
+pip install -r requirements.txt
 ```
 
-Install dependencies and create local configuration:
+### 2. Configuration
+
+Copy the example environment configuration:
 
 ```powershell
-pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Update `DATABASE_URL` in `.env` to match your PostgreSQL instance. The health endpoint does not require a running database.
+Ensure the PostgreSQL credentials and Ollama configuration in `.env` match your local environment:
 
-## PostgreSQL and migrations
+```ini
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/safescreen
+AI_MODE=mock              # Set to 'real' for live model execution
+AI_DEVICE=cpu             # Set to 'cuda' for GPU acceleration
+CONTEXT_NUM_CTX=8192
+CONTEXT_MAX_INPUT_TOKENS=6000
+```
 
-Create a local development database (replace the credentials as needed):
+### 3. Database Initialization & Migrations
+
+Create the database in PostgreSQL:
 
 ```powershell
 psql -U postgres -c "CREATE DATABASE safescreen;"
 ```
 
-Set `DATABASE_URL` in `.env` using SQLAlchemy's psycopg driver format:
-
-```text
-DATABASE_URL=postgresql+psycopg://postgres:your-password@localhost:5432/safescreen
-```
-
-Apply the initial migration:
+Apply Alembic migrations:
 
 ```powershell
-python -m alembic upgrade head
+.venv\Scripts\alembic upgrade head
 ```
 
-To create a migration after a future model change:
+#### Migration History
+- `20260821_0001`: Initial schema (`videos`, `moderation_results`, `detections`, `evidence`, `transcript_segments`).
+- `20260823_0002`: Updated enums and foreign key cascades.
+- `20261008_0003`: Altered `evidence.content` from `VARCHAR(1024)` to `TEXT` for unbounded multimodal explanation persistence.
+
+---
+
+## Running the Application
+
+### Start FastAPI Server
 
 ```powershell
-python -m alembic revision --autogenerate -m "describe change"
-python -m alembic upgrade head
+$env:PYTHONPATH='backend'
+.venv\Scripts\uvicorn app.main:app --app-dir backend --reload --port 8000
 ```
 
-The initial schema contains videos, moderation results, detections, evidence, and transcript segments. The application does not connect to PostgreSQL until a database-backed feature or a future readiness check explicitly uses it.
-
-## Run the API
-
-From the repository root:
+Verify service health:
 
 ```powershell
-uvicorn app.main:app --app-dir backend --reload
-```
-
-Verify the service:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+curl.exe http://127.0.0.1:8000/api/v1/health
 ```
 
 Expected response:
-
 ```json
 {"status":"ok","service":"SafeScreen AI"}
 ```
 
-## Tests
+Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+
+---
+
+## API Usage Guide
+
+### 1. Upload Video
+`POST /api/v1/videos`
+
+Accepts multipart form-data. Validates file signature, MIME type, duration (max 30 mins), and size (max 500 MB).
 
 ```powershell
-pytest
+curl.exe -X POST http://127.0.0.1:8000/api/v1/videos -F "file=@Test Videos\Cooking.mp4;type=video/mp4"
 ```
 
-The unit suite uses isolated SQLite databases, so it does not require a local PostgreSQL server. PostgreSQL remains the supported runtime database and the Alembic migration targets PostgreSQL-compatible SQLAlchemy types.
-
-## Video upload
-
-`POST /api/v1/videos` accepts multipart field `file`. Supported extensions are MP4, MOV, AVI, and MKV. The current limits are 500 MB and 30 minutes.
-
-```powershell
-curl.exe -X POST http://127.0.0.1:8000/api/v1/videos -F "file=@C:\path\to\video.mp4;type=video/mp4"
-```
-
+Response:
 ```json
-{"video_id":"vid_...","status":"UPLOADED"}
+{
+  "video_id": "vid_d2a1d419bb6845e99ab243358e0b4a78",
+  "filename": "Cooking.mp4",
+  "status": "UPLOADED",
+  "duration": 10.6,
+  "file_size": 15404927
+}
 ```
 
-Files are streamed into `STORAGE_PATH/videos` with server-generated filenames; the client filename is never used as a path. `GET /api/v1/videos/{video_id}` returns stored public metadata and `GET /api/v1/videos/{video_id}/status` returns only the ID and status.
+### 2. Check Video Processing Status
+`GET /api/v1/videos/{video_id}/status`
 
-## Internal processing foundation
-
-Internal services sample JPEG frames every `FRAME_SAMPLING_INTERVAL_SECONDS` (default: one second) into controlled `storage/frames` paths, and extract audio into `storage/audio` paths. Audio inspection/extraction requires `ffprobe` and `ffmpeg` available on `PATH`; videos without an audio stream return a successful no-audio result.
-
-## AI architecture & model adapters
-
-AI services adhere to vendor-neutral contracts and Protocol interfaces for vision, speech-to-text, text moderation, and context analysis. Deterministic mocks keep tests fast, and real adapters can be activated via configuration:
-
-- **Vision (`YoloVisionAnalyzer`)**: Uses Ultralytics YOLO models (default: `yolov8n.pt`, ~6MB nano model) for visual object and weapon/tool detection. Produces timestamped `VisualDetection` contracts with bounding box metadata.
-- **Speech-to-Text (`WhisperTranscriber`)**: Uses OpenAI Whisper (default: `tiny`, ~75MB) for speech transcription with segment timestamps. Handles videos without audio streams gracefully.
-- **Text Moderation (`TransformerTextModerator`)**: Uses Hugging Face transformer sequence classification pipelines (default: `unitary/toxic-bert`) to evaluate transcript text and extract policy signals (`TextModerationSignal`).
-- **Context Engine (`QwenContextAnalyzer`)**: Uses local Qwen 2.5 VL 7B (`qwen2.5vl:7b`) via Ollama. Fuses visual detections, video frames, Whisper audio transcripts, and text policy signals into a structured `ContextualInterpretation`.
-- **Moderation Engine (`ModerationEngine`)**: Standalone, deterministic decisioning service that synthesizes multi-modal signals, evaluates category severity, applies contextual mitigation/aggravation rules (e.g. cooking context mitigating knife detections), computes decoupled risk scores vs confidence, and outputs grounded `ModerationResult` assessments.
-- **Deterministic Mocks**: `MockVisionAnalyzer`, `MockTranscriber`, `MockTextModerator`, and `MockContextAnalyzer` provide zero-latency, deterministic execution for local development and CI.
-
-### Model Execution & Hardware Requirements
-- **Inference Hardware**: YOLO and Whisper run on standard multi-core CPUs or CUDA. Qwen 2.5 VL (`qwen2.5vl:7b`) runs locally via Ollama with 4-bit quantization on the NVIDIA RTX 3070 Laptop GPU (consuming ~6.6 GB VRAM).
-- **Automatic Downloads**: When `AI_MODE=real`, YOLO and Whisper download their checkpoints on first use, and `QwenContextAnalyzer` connects to the local Ollama runtime.
-
-### Switching AI Mode
-In `.env`:
-```text
-# Use fast mocks for test suites & offline dev (default)
-AI_MODE=mock
-
-# Or activate real AI models on CPU / CUDA + Ollama Qwen
-AI_MODE=real
-AI_DEVICE=cpu
-CONTEXT_MODEL_NAME=qwen2.5vl:7b
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-```
-
-### Running Real Model Smoke Tests
-To verify live model inference across YOLO, Whisper, Transformer, and Qwen 2.5 VL:
 ```powershell
-python scripts/smoke_test_ai_models.py --device cpu --qwen-model qwen2.5vl:7b
+curl.exe http://127.0.0.1:8000/api/v1/videos/{video_id}/status
 ```
 
-## Moderation Persistence & Reporting (Milestone 9)
+Response:
+```json
+{
+  "video_id": "vid_d2a1d419bb6845e99ab243358e0b4a78",
+  "status": "COMPLETED"
+}
+```
 
-Milestone 9 completes the moderation lifecycle by persisting domain evaluation outcomes to PostgreSQL and exposing them via structured, sanitized public API endpoints without LLM re-computation:
-
-- **Moderation Persistence Layer (`ModerationPersistenceService`, `ModerationRepository`)**:
-  - Atomically stores decision, risk level, risk score, confidence, and explainability narrative in `moderation_results`.
-  - Persists policy-relevant findings into `detections` (raw non-violating objects like cooking knives or vegetables are NOT recorded as policy violations).
-  - Persists multi-modal evidence items in `evidence` with sanitized public references (preventing internal host path exposure).
-  - Persists spoken dialogue segments in `transcript_segments` (videos with no audio record 0 rows and succeed).
-  - Supports atomic re-processing: re-evaluating a video cleanly replaces the prior moderation tree without orphan records.
-- **Report & Evidence Retrieval Service (`ModerationReportService`)**:
-  - Generates comprehensive `ModerationReportResponse` objects directly from PostgreSQL.
-  - Exposes dedicated `GET /api/v1/videos/{video_id}/evidence` collections (empty lists for benign videos with 0 evidence).
-
-### API Endpoints
-
-#### 1. Retrieve Full Moderation Report
+### 3. Retrieve Full Moderation Report
 `GET /api/v1/videos/{video_id}/moderation`
+
+Retrieves the structured report from PostgreSQL with findings, confidence scores, risk level, and explainability narrative:
 
 ```powershell
 curl.exe http://127.0.0.1:8000/api/v1/videos/{video_id}/moderation
 ```
 
-Sample JSON response:
+Sample Response:
 ```json
 {
-  "video_id": "test_slap",
-  "filename": "Slap.mp4",
-  "created_at": "2026-08-23T11:50:50.123456Z",
-  "decision": "REVIEW_REQUIRED",
-  "risk_level": "HIGH",
-  "risk_score": 0.765,
-  "overall_confidence": 0.8261,
-  "detected_categories": ["threats"],
-  "explanation": "Evidence Analyzed: 39 visual detection(s)... context inferred as 'threatening interaction' (conf: 0.90)... Contextual Impact: Identified threatening/hostile context reinforced policy risk.",
-  "findings": [
-    {
-      "id": "det_...",
-      "category": "threats",
-      "confidence": 0.95,
-      "start_timestamp": 0.0,
-      "end_timestamp": 30.0,
-      "explanation": "Policy finding for 'threats' supported by multi-modal evidence synthesis.",
-      "evidence_references": ["frame_3d7e96a449fd4789bf034c84b716c522", "..."]
-    }
-  ],
-  "evidence": [
-    {
-      "id": "ev_...",
-      "type": "context",
-      "timestamp": 0.0,
-      "content": "Threatening altercation detected",
-      "reference": "frame_3d7e96a449fd4789bf034c84b716c522"
-    }
-  ],
-  "transcripts": [
-    {
-      "start_timestamp": 0.0,
-      "end_timestamp": 2.0,
-      "text": "you"
-    }
-  ]
+  "video_id": "test_cooking",
+  "filename": "Cooking.mp4",
+  "decision": "APPROVED",
+  "risk_level": "LOW",
+  "risk_score": 0.0,
+  "overall_confidence": 0.6701,
+  "detected_categories": [],
+  "explanation": "Evidence Analyzed: 39 visual detection(s) including ['knife' (0.92), 'person' (0.74)]; context inferred as 'Cooking' (conf: 0.95)... Contextual Impact: Verified benign context ('Cooking') confirms objects are non-harmful tools, mitigating policy risk. Final moderation outcome is APPROVED.",
+  "findings": [],
+  "evidence": [],
+  "transcripts": []
 }
 ```
 
-#### 2. Retrieve Traceable Evidence Collection
+### 4. Retrieve Traceable Evidence
 `GET /api/v1/videos/{video_id}/evidence`
+
+Returns all traceable multi-modal evidence items (frames, timestamps, context explanations) supporting policy findings:
 
 ```powershell
 curl.exe http://127.0.0.1:8000/api/v1/videos/{video_id}/evidence
 ```
 
-Sample JSON response:
-```json
-{
-  "video_id": "test_cooking",
-  "total_count": 0,
-  "evidence": []
-}
-```
+---
 
-## Benchmark Evaluation & Quality Analysis (Milestone 10)
+## Running Automated Tests
 
-Milestone 10 introduces a systematic evaluation, benchmarking, and error analysis framework to assess moderation decision accuracy, cross-modal disagreements, per-stage latencies, and ablation dynamics.
-
-- **Evaluation Dataset (`evaluation/dataset.json`)**:
-  - Represents 12 distinct moderation scenarios (benign cooking, shooting range, physical assault, ambiguous weapons, sports, educational demos, toxic speech, audio-only threats, silent violence, and neutral scenes).
-  - Maintains strict ground-truth separation across expected context, expected decision, expected risk band, and expected policy categories.
-  - Transparently distinguishes between confirmed available test media and placeholder scenarios.
-- **Evaluation Runner (`scripts/run_evaluation.py`)**:
-  - Executes benchmarks across dataset samples using the real M1–M9 pipeline without modifying model weights.
-  - Supports modality ablation studies (`full`, `visual_qwen`, `visual_audio`, `visual_only`).
-  - Exports structured artifacts into `evaluation/`:
-    - `results.json`: Detailed sample-level prediction records.
-    - `metrics.json`: Serialized decision, context, policy, disagreement, and latency metrics.
-    - `summary.md`: Human-readable benchmark report with confusion matrices and ablation comparisons.
-    - `errors.md`: Structured root-cause error diagnostics.
-
-### Running Benchmark Evaluations & Ablations
+SafeScreen includes comprehensive test suites (unit, integration, API, migration, and temporal pipeline tests). By default, tests run using isolated SQLite sessions and deterministic AI mocks, requiring no external GPU or Ollama runtime.
 
 ```powershell
-# Run benchmark evaluation on available test videos with ablation analysis
-python scripts/run_evaluation.py --ai-mode real --device cpu --ablations
+# Run the entire test suite (115 tests)
+$env:PYTHONPATH='backend'
+.venv\Scripts\pytest
 ```
 
-## Running the End-to-End Pipeline
+To run individual test modules:
+```powershell
+# Test temporal context windowing & token budgets
+.venv\Scripts\pytest backend/tests/test_temporal_context_pipeline.py
 
-Run all 9 stages (M1–M9) against real local models and PostgreSQL:
+# Test moderation engine decisioning & mitigation
+.venv\Scripts\pytest backend/tests/test_moderation_engine.py
+
+# Test PostgreSQL persistence & report generation
+.venv\Scripts\pytest backend/tests/test_moderation_persistence.py
+
+# Test API endpoints
+.venv\Scripts\pytest backend/tests/test_moderation_routes.py
+```
+
+---
+
+## Running the End-to-End Pipeline Evaluation
+
+You can execute the full 9-stage pipeline against test videos on CPU or CUDA:
 
 ```powershell
-# Run on benign cooking video
-python scripts/test_video_pipeline.py --video "Test Videos/Cooking.mp4"
+# Run with real AI models on CUDA
+.venv\Scripts\python scripts/test_video_pipeline.py --video "Test Videos/Cooking.mp4" --ai-mode real --device cuda
 
-# Run on shooting range video
-python scripts/test_video_pipeline.py --video "Test Videos/Shooting Range.mp4"
+# Run with real AI models on CPU
+.venv\Scripts\python scripts/test_video_pipeline.py --video "Test Videos/Shooting Range.mp4" --ai-mode real --device cpu
 
-# Run on threatening/violence altercation video
-python scripts/test_video_pipeline.py --video "Test Videos/Slap.mp4"
+# Run in mock mode for instant end-to-end testing
+.venv\Scripts\python scripts/test_video_pipeline.py --video "Test Videos/Cooking.mp4" --ai-mode mock
 ```
 
-## Current structure
+---
+
+## Project Structure
 
 ```text
-backend/
-  app/
-    api/          Versioned route registration (health, videos, moderation)
-    core/         Settings and logging
-    db/           SQLAlchemy engine, enums, models, and session dependency
-    schemas/      Pydantic request and response schemas (health, video, moderation)
-    services/
-      ai/         AI contracts, protocols, mocks, YOLO/Whisper/Transformer/Qwen adapters, and factory
-      evaluation/ Dataset schemas, loaders, metrics calculator, runner, and report generator
-      moderation/ ModerationEngine, severity configs, evidence traceability, repository, persistence, reporting
-      video/      Video ingestion, validation, metadata, processing, and repository
-    main.py       Application factory and FastAPI entry point
-  tests/          Unit and integration tests (migrations, domain, ingestion, processing, AI adapters, context engine, moderation engine, persistence, API routes, evaluation)
-evaluation/       Benchmark dataset, metrics JSON, summary markdown, and error diagnostics
-storage/          Local runtime storage (ignored except for .gitkeep)
-migrations/       Alembic migration environment and revision history
-scripts/          Pipeline evaluation, benchmark runner, and smoke test scripts
+SafeScreen/
+├── backend/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── routes/          # Versioned REST endpoints (health, videos, moderation)
+│   │   │   └── validators.py    # Request ID and input format validators
+│   │   ├── core/
+│   │   │   ├── config.py        # Pydantic BaseSettings loaded from .env
+│   │   │   └── logging.py       # Structured JSON/console logging
+│   │   ├── db/
+│   │   │   ├── database.py      # SQLAlchemy engine, session maker, and connectivity checks
+│   │   │   ├── enums.py         # ModerationDecision, RiskLevel, VideoStatus enums
+│   │   │   └── models.py        # Video, ModerationResult, Detection, Evidence, Transcript models
+│   │   ├── schemas/             # Pydantic request & response schemas
+│   │   └── services/
+│   │       ├── ai/              # AI contracts, YOLO, Whisper, Toxic-BERT, Qwen, and factory
+│   │       │   ├── context.py   # QwenContextAnalyzer Ollama adapter
+│   │       │   ├── contracts.py # TimestampedFrame, VisualDetection, TranscriptSegment, Context
+│   │       │   ├── factory.py   # AI service resolver (mock vs real)
+│   │       │   └── temporal.py  # Temporal windowing, frame selection, token-budget enforcement
+│   │       ├── evaluation/      # Benchmark dataset schemas, loaders, metrics, and ablations
+│   │       ├── moderation/      # ModerationEngine, persistence, repository, reporting
+│   │       └── video/           # Ingestion, validation, metadata, frame & audio processing
+│   │   └── main.py              # FastAPI app initialization and route registration
+│   └── tests/                   # 115 unit and integration tests
+├── evaluation/                  # Benchmark dataset (12 scenarios), metrics, and reports
+├── migrations/                  # Alembic environment and database revisions (0001 - 0003)
+├── scripts/
+│   ├── run_evaluation.py        # Benchmark suite runner with ablation studies
+│   ├── smoke_test_ai_models.py  # Standalone live inference validation for AI models
+│   └── test_video_pipeline.py   # End-to-End M1–M9 video pipeline evaluation script
+├── storage/                     # Local artifact storage (videos, frames, audio)
+├── Test Videos/                 # Sample video clips (Cooking, Slap, Shooting Range, etc.)
+├── AGENTS.md                    # Backend architecture rules and development principles
+├── PROJ_SPEC.md                 # Master project specification and source of truth
+└── README.md                    # Project documentation
 ```
 
-## Environment variables
+---
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `APP_NAME` | Public application name | `SafeScreen AI` |
-| `APP_ENV` | Runtime environment label | `development` |
-| `API_V1_PREFIX` | Prefix for public API routes | `/api/v1` |
-| `LOG_LEVEL` | Python log level | `INFO` |
-| `DATABASE_URL` | PostgreSQL SQLAlchemy connection URL | `postgresql+psycopg://...` |
-| `STORAGE_PATH` | Local media storage location | `storage` |
-| `AI_MODE` | AI adapter mode (`mock` or `real`) | `mock` |
-| `AI_DEVICE` | Hardware device for inference (`cpu` or `cuda`) | `cpu` |
-| `VISION_MODEL_NAME` | YOLO model identifier / checkpoint path | `yolov8n.pt` |
-| `VISION_CONFIDENCE_THRESHOLD` | Vision minimum detection confidence | `0.25` |
-| `TRANSCRIPTION_MODEL_NAME` | Whisper model size (`tiny`, `base`, `small`, etc.) | `tiny` |
-| `TEXT_MODERATION_MODEL_NAME` | Hugging Face model identifier for text classification | `unitary/toxic-bert` |
-| `TEXT_MODERATION_CONFIDENCE_THRESHOLD` | Minimum text moderation signal confidence | `0.5` |
-| `CONTEXT_MODEL_NAME` | Local Qwen model tag in Ollama | `qwen2.5vl:7b` |
-| `OLLAMA_BASE_URL` | Ollama HTTP endpoint URL | `http://127.0.0.1:11434` |
-| `CONTEXT_TIMEOUT_SECONDS` | Timeout in seconds for Qwen VLM generation | `120.0` |
-| `MODERATION_LOW_RISK_THRESHOLD` | Risk score bound for LOW risk band | `0.30` |
-| `MODERATION_MEDIUM_RISK_THRESHOLD` | Risk score bound for MEDIUM risk band | `0.60` |
-| `MODERATION_HIGH_RISK_THRESHOLD` | Risk score bound for HIGH/CRITICAL risk band | `0.85` |
-| `MODERATION_AUTO_REJECT_THRESHOLD` | Threshold above which content is REJECTED | `0.85` |
-| `MODERATION_REVIEW_THRESHOLD` | Threshold above which content is REVIEW_REQUIRED | `0.40` |
-| `MODERATION_MIN_SIGNAL_CONFIDENCE` | Minimum signal confidence considered by engine | `0.30` |
+## Implementation Status & Roadmap
+
+### What is Fully Implemented
+
+- [x] **Backend Foundation**: FastAPI application, structured logging, configuration management via Pydantic BaseSettings.
+- [x] **Relational Persistence**: PostgreSQL with SQLAlchemy ORM, connection pooling, and reversible Alembic migrations.
+- [x] **Schema Optimization**: Altered `evidence.content` to PostgreSQL `TEXT` for unbounded multimodal explanation storage.
+- [x] **Secure Video Ingestion**: MIME/header validation, size/duration constraints, path traversal protection, server-side UUID storage.
+- [x] **Video & Audio Preprocessing**:
+  - Frame sampling at customizable intervals (JPEG artifacts with timestamp references).
+  - Audio extraction via FFmpeg/ffprobe to 16kHz WAV, gracefully supporting videos without audio.
+- [x] **AI Adapters & Abstract Interfaces**:
+  - Vendor-neutral protocols (`VisionAnalyzer`, `Transcriber`, `TextModerator`, `ContextAnalyzer`).
+  - Full deterministic mock suite for zero-latency CI and offline testing.
+  - Real YOLOv8 adapter with bounding box extraction.
+  - Real OpenAI Whisper adapter with timestamped dialogue segments.
+  - Real Hugging Face Transformer adapter (`toxic-bert`) for policy signals.
+- [x] **Scalable Multimodal Context Engine**:
+  - Local Qwen 2.5 VL 7B integration via Ollama API.
+  - Temporal windowing pipeline handling arbitrary multi-minute videos without context window blowup.
+  - Dynamic runtime context sizing (`options.num_ctx = CONTEXT_NUM_CTX`).
+  - Proactive token-budget estimation and image pruning (`CONTEXT_MAX_INPUT_TOKENS = 6000`).
+- [x] **Context-Aware Moderation Engine**:
+  - Standalone, deterministic decisioning service.
+  - Separation of model confidence from moderation risk.
+  - Contextual mitigation rules (e.g., culinary knives in cooking context producing `APPROVED` with zero violation rows).
+  - Contextual aggravation rules (e.g., physical altercation producing `REVIEW_REQUIRED`).
+- [x] **Persistence & Reporting Service**:
+  - Atomic persistence of moderation outcomes into PostgreSQL with automatic rollback on error.
+  - Clean re-processing replacement without orphaned records.
+  - Path sanitization preventing internal server storage paths from leaking in API responses.
+  - REST endpoints for reports (`GET /videos/{id}/moderation`) and evidence (`GET /videos/{id}/evidence`).
+- [x] **Evaluation & Benchmarking Framework**:
+  - Benchmark dataset covering 12 distinct moderation scenarios.
+  - Automated evaluation runner supporting modality ablation studies (`full`, `visual_qwen`, `visual_audio`, `visual_only`).
+  - Error diagnostics and confusion matrix generation.
+- [x] **Automated Test Suite**: 115 passing tests across all layers.
+
+---
+
+### What is Left to Implement
+
+The following items are designated for subsequent milestones:
+
+1. **Background Job Queue & Worker System (Celery / Redis / ARQ)**:
+   - *Current State*: The API provides upload and retrieval endpoints, while end-to-end pipeline execution is run synchronously or via evaluation scripts.
+   - *Next Step*: Decouple upload from processing by dispatching moderation jobs to a distributed worker pool (e.g., Celery + Redis or ARQ), updating video status asynchronously (`UPLOADED` → `PROCESSING` → `COMPLETED` / `FAILED`).
+
+2. **Video Lifecycle Management Endpoints**:
+   - `DELETE /api/v1/videos/{video_id}`: Remove video record, database associations, and disk artifacts (frames, audio, raw video).
+   - `POST /api/v1/videos/{video_id}/retry`: Allow re-triggering failed or incomplete moderation runs without re-uploading.
+   - `POST /api/v1/videos/{video_id}/review`: Enable human moderators to submit manual overrides or review resolutions for `REVIEW_REQUIRED` videos.
+
+3. **Evidence Association Optimization**:
+   - *Current State*: If a policy violation is flagged, all valid visual detections across the video are currently attached to that detection finding as raw evidence items.
+   - *Next Step*: Filter attached visual evidence items to only include objects directly associated with the flagged policy category or proximate in time to the violation timestamps, reducing database footprint for long videos.
+
+4. **Containerization & Deployment Architecture**:
+   - Production multi-stage `Dockerfile` for the FastAPI backend and AI dependencies.
+   - `docker-compose.yml` orchestrating PostgreSQL, Redis, Ollama, and FastAPI worker containers.
+
+5. **Authentication & Authorization**:
+   - API key or JWT-based authentication for upload and administrative endpoints.
+   - Role-Based Access Control (RBAC) distinguishing standard uploaders from compliance moderators.
+
+6. **Frontend & Moderator Dashboard (Out of Current Backend Scope)**:
+   - Reviewer web dashboard for human moderation teams to inspect flagged videos, scrubber-synchronized bounding boxes, and timestamped transcripts.

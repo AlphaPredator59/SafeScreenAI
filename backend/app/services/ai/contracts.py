@@ -1,7 +1,7 @@
 """Shared, vendor-neutral contracts exchanged by AI services."""
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Any, Mapping
 
 
 class AIServiceError(RuntimeError):
@@ -61,10 +61,29 @@ class TextModerationSignal:
 
 
 @dataclass(frozen=True)
+class ContextWindowInterpretation:
+    start_timestamp: float
+    end_timestamp: float
+    category: str
+    confidence: float
+    reasoning: str
+    evidence_references: tuple[str, ...] = ()
+    status: str = "success"  # "success", "failed", "inconclusive", "skipped"
+
+    def __post_init__(self) -> None:
+        _confidence(self.confidence)
+        if self.start_timestamp < 0 or self.end_timestamp < self.start_timestamp:
+            raise ValueError("invalid window timestamps")
+
+
+@dataclass(frozen=True)
 class ContextualInterpretation:
     category: str
     confidence: float
     reasoning: str
     evidence_references: tuple[str, ...]
+    window_interpretations: tuple[ContextWindowInterpretation, ...] = ()
+    diagnostics: Mapping[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self) -> None: _confidence(self.confidence)
+    def __post_init__(self) -> None:
+        _confidence(self.confidence)

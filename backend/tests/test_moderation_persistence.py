@@ -340,3 +340,54 @@ def test_report_does_not_expose_internal_paths_or_secrets(db_session: Session) -
         assert "C:\\" not in (ev.reference or "")
         assert "SecretUser" not in (ev.reference or "")
         assert ev.reference == "frame_001.jpg"
+
+
+def test_persist_evidence_content_exceeding_1024_chars_without_truncation(db_session: Session) -> None:
+    """Evidence content exceeding 1024 characters persists cleanly to TEXT column without truncation."""
+    video = create_test_video(db_session, "vid_long_evidence_01")
+    repository = ModerationRepository(db_session)
+    persistence_service = ModerationPersistenceService(repository)
+    report_service = ModerationReportService(repository)
+
+    # Construct a realistic long contextual description exceeding 1024 chars (e.g. 2500 chars)
+    long_reasoning = "Multi-window temporal synthesis across video segments: " + (
+        "Window segment analysis verified interaction dynamics with detailed behavioral indicators. " * 25
+    )
+    assert len(long_reasoning) > 2000
+
+    m8_result = ModerationResult(
+        decision=ModerationDecision.REVIEW_REQUIRED,
+        risk_level=RiskLevel.HIGH,
+        risk_score=0.85,
+        overall_confidence=0.92,
+        detected_categories=("violence",),
+        supporting_evidence=(
+            EvidenceItem(
+                modality="context",
+                category="violence",
+                confidence=0.92,
+                reference="win_0_60,win_55_115",
+                timestamp=10.0,
+                description=long_reasoning,
+            ),
+        ),
+        explanation="Long contextual evidence evaluation completed.",
+    )
+
+    persisted = persistence_service.persist_moderation_run(video_id=video.id, result=m8_result)
+    assert persisted is not None
+    assert len(persisted.detections) == 1
+    assert len(persisted.detections[0].evidence_items) == 1
+
+    stored_evidence = persisted.detections[0].evidence_items[0]
+    assert stored_evidence.content == long_reasoning
+    assert len(stored_evidence.content) == len(long_reasoning)
+
+    # Verify retrieval through report service
+    report = report_service.get_moderation_report(video.id)
+    assert report is not None
+    assert len(report.evidence) == 1
+    assert report.evidence[0].content == long_reasoning
+    assert len(report.evidence[0].content) == len(long_reasoning)
+
+
