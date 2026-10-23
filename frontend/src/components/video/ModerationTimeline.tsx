@@ -72,25 +72,46 @@ export const ModerationTimeline: React.FC<ModerationTimelineProps> = ({
             style={{ width: `${playheadPercent}%` }}
           />
 
-          {/* Finding highlight segments on track */}
-          {findings.map((f) => {
+          {/* Finding & Event highlight segments on track */}
+          {findings.flatMap((f) => {
+            const isSelected = f.id === selectedFindingId;
+            if (f.events && f.events.length > 0) {
+              return f.events.map((ev, evIdx) => {
+                const startPct = Math.min(100, (ev.start_time / safeDuration) * 100);
+                const endPct = Math.min(100, (ev.end_time / safeDuration) * 100);
+                const widthPct = Math.max(1.5, endPct - startPct);
+
+                return (
+                  <div
+                    key={`${f.id}_ev_${evIdx}`}
+                    style={{ left: `${startPct}%`, width: `${widthPct}%` }}
+                    className={`absolute top-0 bottom-0 rounded-xs pointer-events-none ${
+                      isSelected
+                        ? 'bg-red-500 shadow-xs'
+                        : 'bg-amber-500/80 dark:bg-amber-400/80'
+                    }`}
+                  />
+                );
+              });
+            }
+
             const startPct = Math.min(100, (f.start_timestamp / safeDuration) * 100);
             const endPct = f.end_timestamp
               ? Math.min(100, (f.end_timestamp / safeDuration) * 100)
               : startPct + 2;
             const widthPct = Math.max(1.5, endPct - startPct);
 
-            return (
+            return [
               <div
                 key={f.id}
                 style={{ left: `${startPct}%`, width: `${widthPct}%` }}
                 className={`absolute top-0 bottom-0 rounded-xs pointer-events-none ${
-                  f.id === selectedFindingId
+                  isSelected
                     ? 'bg-red-500 shadow-xs'
                     : 'bg-amber-500/80 dark:bg-amber-400/80'
                 }`}
               />
-            );
+            ];
           })}
         </div>
 
@@ -104,11 +125,40 @@ export const ModerationTimeline: React.FC<ModerationTimelineProps> = ({
 
         {/* Clickable Event Markers */}
         <div className="relative h-7 mt-2">
-          {findings.map((finding) => {
-            const markerPercent = Math.min(98, Math.max(2, (finding.start_timestamp / safeDuration) * 100));
+          {findings.flatMap((finding) => {
             const isSelected = finding.id === selectedFindingId;
 
-            return (
+            if (finding.events && finding.events.length > 0) {
+              return finding.events.map((ev, evIdx) => {
+                const markerPercent = Math.min(98, Math.max(2, (ev.start_time / safeDuration) * 100));
+
+                return (
+                  <button
+                    key={`${finding.id}_m_${evIdx}`}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSeek(ev.start_time);
+                      onSelectFinding(finding);
+                    }}
+                    style={{ left: `${markerPercent}%` }}
+                    title={`${finding.category} [${formatSeconds(ev.start_time)} - ${formatSeconds(ev.end_time)}] (Conf: ${(ev.confidence * 100).toFixed(0)}%)`}
+                    className={`absolute -translate-x-1/2 p-1 rounded-full transition-transform hover:scale-125 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      isSelected
+                        ? 'bg-red-600 text-white scale-110 z-30 ring-2 ring-red-400'
+                        : 'bg-amber-500 hover:bg-amber-600 text-white z-10'
+                    }`}
+                    aria-label={`Jump to ${finding.category} at ${formatSeconds(ev.start_time)}`}
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                  </button>
+                );
+              });
+            }
+
+            const markerPercent = Math.min(98, Math.max(2, (finding.start_timestamp / safeDuration) * 100));
+
+            return [
               <button
                 key={finding.id}
                 type="button"
@@ -128,7 +178,7 @@ export const ModerationTimeline: React.FC<ModerationTimelineProps> = ({
               >
                 <AlertTriangle className="w-3 h-3" />
               </button>
-            );
+            ];
           })}
         </div>
 

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,38 @@ class Settings(BaseSettings):
     moderation_auto_reject_threshold: float = 0.85
     moderation_review_threshold: float = 0.40
     moderation_min_signal_confidence: float = 0.30
+    gemini_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "gemini_api_key",
+            "GEMINI_API_KEY",
+            "google_api_key",
+            "GOOGLE_API_KEY",
+        ),
+    )
+    gemini_model_name: str = Field(
+        default="gemini-3.5-flash-lite",
+        validation_alias=AliasChoices(
+            "gemini_model_name",
+            "GEMINI_MODEL_NAME",
+            "gemini_model",
+            "GEMINI_MODEL",
+        ),
+    )
+    gemini_timeout_seconds: float = Field(
+        default=30.0,
+        validation_alias=AliasChoices(
+            "gemini_timeout_seconds",
+            "GEMINI_TIMEOUT_SECONDS",
+        ),
+    )
+    gemini_api_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta",
+        validation_alias=AliasChoices(
+            "gemini_api_base_url",
+            "GEMINI_API_BASE_URL",
+        ),
+    )
 
 
 @lru_cache

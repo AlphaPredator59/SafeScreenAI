@@ -53,19 +53,38 @@ export const FindingsMatrix: React.FC<FindingsMatrixProps> = ({ findings }) => {
                       {f.category}
                     </Badge>
                   </td>
-                  <td className="py-3.5 px-3 whitespace-nowrap font-mono text-slate-600 dark:text-slate-300">
-                    <span className="inline-flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      {f.end_timestamp
-                        ? `${formatTime(f.start_timestamp)} – ${formatTime(f.end_timestamp)}`
-                        : formatTime(f.start_timestamp)}
-                    </span>
+                  <td className="py-3.5 px-3 font-mono text-slate-600 dark:text-slate-300">
+                    {f.events && f.events.length > 0 ? (
+                      <div className="flex flex-col gap-1">
+                        {f.events.map((ev, idx) => (
+                          <div
+                            key={idx}
+                            className="inline-flex items-center gap-1.5 text-[11px] bg-slate-100 dark:bg-slate-800/70 px-2 py-0.5 rounded text-slate-700 dark:text-slate-200 w-fit"
+                          >
+                            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span>
+                              {formatTime(ev.start_time)} – {formatTime(ev.end_time)}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-semibold">
+                              ({(ev.confidence * 100).toFixed(0)}%)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        {f.end_timestamp
+                          ? `${formatTime(f.start_timestamp)} – ${formatTime(f.end_timestamp)}`
+                          : formatTime(f.start_timestamp)}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3.5 px-3 whitespace-nowrap font-mono font-bold text-slate-700 dark:text-slate-300">
                     {(f.confidence * 100).toFixed(0)}%
                   </td>
                   <td className="py-3.5 px-3 text-slate-700 dark:text-slate-300 max-w-md">
-                    {f.explanation || <span className="text-slate-400 italic">No explanation recorded</span>}
+                    {f.summary || f.explanation || <span className="text-slate-400 italic">No explanation recorded</span>}
                   </td>
                   <td className="py-3.5 px-3 whitespace-nowrap text-right font-mono text-slate-500">
                     <span className="inline-flex items-center gap-1">

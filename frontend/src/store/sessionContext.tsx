@@ -42,7 +42,7 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [sessionVideos]);
 
-  const addSessionVideo = (video: SessionVideoRecord, blobUrl?: string) => {
+  const addSessionVideo = React.useCallback((video: SessionVideoRecord, blobUrl?: string) => {
     if (blobUrl) {
       blobUrlMapRef.current.set(video.videoId, blobUrl);
     }
@@ -51,24 +51,24 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const filtered = prev.filter((v) => v.videoId !== video.videoId);
       return [video, ...filtered];
     });
-  };
+  }, []);
 
-  const updateSessionVideo = (videoId: string, partial: Partial<SessionVideoRecord>) => {
+  const updateSessionVideo = React.useCallback((videoId: string, partial: Partial<SessionVideoRecord>) => {
     setSessionVideos((prev) =>
       prev.map((v) => (v.videoId === videoId ? { ...v, ...partial } : v))
     );
-  };
+  }, []);
 
-  const removeSessionVideo = (videoId: string) => {
+  const removeSessionVideo = React.useCallback((videoId: string) => {
     const existingUrl = blobUrlMapRef.current.get(videoId);
     if (existingUrl) {
       URL.revokeObjectURL(existingUrl);
       blobUrlMapRef.current.delete(videoId);
     }
     setSessionVideos((prev) => prev.filter((v) => v.videoId !== videoId));
-  };
+  }, []);
 
-  const clearSession = () => {
+  const clearSession = React.useCallback(() => {
     // Revoke all in-memory blob URLs
     blobUrlMapRef.current.forEach((url) => {
       try {
@@ -80,11 +80,11 @@ export const SessionProvider: React.FC<{ children: React.ReactNode }> = ({ child
     blobUrlMapRef.current.clear();
     setSessionVideos([]);
     sessionStorage.removeItem(SESSION_STORAGE_VIDEOS_KEY);
-  };
+  }, []);
 
-  const getBlobUrl = (videoId: string): string | undefined => {
+  const getBlobUrl = React.useCallback((videoId: string): string | undefined => {
     return blobUrlMapRef.current.get(videoId);
-  };
+  }, []);
 
   return (
     <SessionContext.Provider

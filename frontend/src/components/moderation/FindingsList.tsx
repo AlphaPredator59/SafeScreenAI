@@ -72,6 +72,11 @@ export const FindingsList: React.FC<FindingsListProps> = ({
                       <Clock className="w-3 h-3" />
                       {timeStr}
                     </span>
+                    {finding.events && finding.events.length > 1 && (
+                      <span className="text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded-full">
+                        {finding.events.length} events
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -81,26 +86,76 @@ export const FindingsList: React.FC<FindingsListProps> = ({
                   Confidence: <strong className="font-bold">{(finding.confidence * 100).toFixed(0)}%</strong>
                 </span>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSeek(finding.start_timestamp);
-                    onSelectFinding(finding);
-                  }}
-                  icon={<Play className="w-3 h-3 fill-current" />}
-                  className="text-xs"
-                >
-                  Jump to {formatTime(finding.start_timestamp)}
-                </Button>
+                {(!finding.events || finding.events.length <= 1) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSeek(finding.start_timestamp);
+                      onSelectFinding(finding);
+                    }}
+                    icon={<Play className="w-3 h-3 fill-current" />}
+                    className="text-xs"
+                  >
+                    Jump to {formatTime(finding.start_timestamp)}
+                  </Button>
+                )}
               </div>
             </div>
 
-            {finding.explanation && (
+            {(finding.summary || finding.explanation) && (
               <p className="mt-3 text-xs text-slate-700 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
-                {finding.explanation}
+                {finding.summary || finding.explanation}
               </p>
+            )}
+
+            {/* Event-level discrete intervals */}
+            {finding.events && finding.events.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Detected Policy Events ({finding.events.length})
+                </div>
+                <div className="grid gap-2">
+                  {finding.events.map((ev, idx) => (
+                    <div
+                      key={idx}
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-slate-50/70 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/60"
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-amber-500" />
+                            {formatTime(ev.start_time)} – {formatTime(ev.end_time)}
+                          </span>
+                          <span className="text-[11px] font-mono text-slate-500">
+                            Confidence: <strong>{(ev.confidence * 100).toFixed(0)}%</strong>
+                          </span>
+                        </div>
+                        {ev.description && (
+                          <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                            {ev.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSeek(ev.start_time);
+                          onSelectFinding(finding);
+                        }}
+                        icon={<Play className="w-2.5 h-2.5 fill-current" />}
+                        className="text-xs shrink-0 self-start sm:self-auto"
+                      >
+                        Jump to {formatTime(ev.start_time)}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {finding.evidence_references.length > 0 && (

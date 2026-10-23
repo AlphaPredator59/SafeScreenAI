@@ -20,6 +20,20 @@ class EvidenceItemResponse(BaseModel):
     reference: str | None = None
 
 
+class PolicyEventResponse(BaseModel):
+    """A discrete temporal interval representing an occurrence of a policy violation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str | None = None
+    start_time: float
+    end_time: float
+    confidence: float
+    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_types: list[str] = Field(default_factory=list)
+    description: str = ""
+
+
 class FindingResponse(BaseModel):
     """A policy-relevant finding associated with a moderation assessment."""
 
@@ -27,11 +41,17 @@ class FindingResponse(BaseModel):
 
     id: str
     category: str
+    severity: float = 0.0
     confidence: float
+    summary: str | None = None
     start_timestamp: float
     end_timestamp: float | None = None
     explanation: str | None = None
     evidence_references: list[str] = Field(default_factory=list)
+    events: list[PolicyEventResponse] = Field(default_factory=list)
+
+
+PolicyFindingResponse = FindingResponse
 
 
 class TranscriptSegmentResponse(BaseModel):
@@ -42,6 +62,19 @@ class TranscriptSegmentResponse(BaseModel):
     start_timestamp: float
     end_timestamp: float
     text: str
+
+
+class AIJustificationResponse(BaseModel):
+    """Structured, evidence-grounded justification for moderation outcome."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    visual_evidence: list[str] = Field(default_factory=list)
+    audio_text_evidence: list[str] = Field(default_factory=list)
+    contextual_analysis: str = ""
+    policy_rationale: list[str] = Field(default_factory=list)
+    uncertainty: list[str] = Field(default_factory=list)
+    is_fallback: bool = False
 
 
 class ModerationReportResponse(BaseModel):
@@ -61,6 +94,8 @@ class ModerationReportResponse(BaseModel):
     findings: list[FindingResponse] = Field(default_factory=list)
     evidence: list[EvidenceItemResponse] = Field(default_factory=list)
     transcripts: list[TranscriptSegmentResponse] = Field(default_factory=list)
+    executive_summary: str = ""
+    ai_justification: AIJustificationResponse = Field(default_factory=AIJustificationResponse)
 
 
 class EvidenceListResponse(BaseModel):

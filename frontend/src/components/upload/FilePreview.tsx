@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { Film, CheckCircle2, ArrowRight, X } from 'lucide-react';
 import { Button } from '../common/Button';
 import { Card } from '../common/Card';
@@ -16,15 +16,13 @@ export const FilePreview: React.FC<FilePreviewProps> = ({
   onCancel,
   isUploading,
 }) => {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewUrl = React.useMemo(() => URL.createObjectURL(file), [file]);
 
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
     return () => {
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(previewUrl);
     };
-  }, [file]);
+  }, [previewUrl]);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes >= 1024 * 1024) {

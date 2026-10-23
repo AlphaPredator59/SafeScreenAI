@@ -13,7 +13,7 @@ interface UseVideoStatusResult {
 
 export function useVideoStatus(videoId: string | undefined): UseVideoStatusResult {
   const [status, setStatus] = useState<VideoStatus | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => Boolean(videoId));
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState<boolean>(false);
   const [pollCount, setPollCount] = useState<number>(0);
@@ -23,7 +23,6 @@ export function useVideoStatus(videoId: string | undefined): UseVideoStatusResul
 
   useEffect(() => {
     if (!videoId) {
-      setIsLoading(false);
       return;
     }
 
@@ -69,7 +68,7 @@ export function useVideoStatus(videoId: string | undefined): UseVideoStatusResul
         window.clearTimeout(pollTimerRef.current);
       }
     };
-  }, [videoId]);
+  }, [videoId, updateSessionVideo]);
 
   return {
     status,

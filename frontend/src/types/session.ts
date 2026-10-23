@@ -12,6 +12,7 @@ export interface SessionVideoRecord {
   riskLevel?: RiskLevel;
   riskScore?: number;
   violationCount?: number;
+  fetchError?: string;
 }
 
 export interface SessionContextType {

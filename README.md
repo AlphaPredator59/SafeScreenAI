@@ -141,6 +141,30 @@ Expected response:
 
 Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
+### Start Moderation Worker
+
+In a separate terminal, launch the standalone PostgreSQL worker process:
+
+```powershell
+# For fast mock AI development mode:
+.\.venv\Scripts\python.exe scripts/worker.py --ai-mode mock --poll-interval 1.0
+
+# For full multimodal neural pipeline (CUDA / PyTorch + Ollama):
+.\.venv\Scripts\python.exe scripts/worker.py --ai-mode real --device cuda --poll-interval 1.0
+```
+
+The worker transactionally claims uploaded videos using `FOR UPDATE SKIP LOCKED`, executes `PipelineRunner`, transitions the video through `PROCESSING` → `ANALYZING` → `COMPLETED`, and persists explainable findings to PostgreSQL.
+
+### Start Frontend UI
+
+In a third terminal:
+
+```powershell
+cd frontend
+npm run dev -- --port 5173
+```
+Access the SafeScreen web interface at `http://localhost:5173`.
+
 ---
 
 ## API Usage Guide
