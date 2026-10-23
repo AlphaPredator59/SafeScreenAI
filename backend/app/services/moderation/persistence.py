@@ -18,6 +18,10 @@ from app.services.ai.contracts import (
 )
 from app.services.moderation.contracts import EvidenceItem, ModerationResult
 from app.services.moderation.repository import ModerationRepository, ModerationRepositoryError
+from app.services.moderation.temporal_grouping import (
+    build_policy_findings,
+    get_category_supporting_evidence,
+)
 
 
 class ModerationPersistenceError(Exception):
@@ -50,45 +54,87 @@ class ModerationPersistenceService:
             explanation=result.explanation,
         )
 
-        # 2. Map only policy-relevant detections
-        # Note: Non-violating raw YOLO objects (e.g. broccoli, bowl, knife in cooking) are NOT persisted as policy violations.
-        if result.detected_categories:
-            for category in result.detected_categories:
-                # Find supporting evidence items matching or relevant to this policy category
-                relevant_evidence = [
-                    ev for ev in result.supporting_evidence
-                    if category.lower() in ev.category.lower() or ev.modality in ("context", "text_signal", "visual")
-                ]
-                if not relevant_evidence:
-                    relevant_evidence = list(result.supporting_evidence)
+        # 2. Map only policy-relevant detections at event-level intervals
+        # Note: Non-violating raw YOLO objects (e.g. broccoli, bowl, chair) are NOT persisted as policy violations.
+        findings = result.findings
+        if not findings and result.detected_categories:
+            findings = tuple(
+                build_policy_findings(
+                    detected_categories=result.detected_categories,
+                    evidence_items=result.supporting_evidence,
+                )
+            )
 
-                # Compute bounds
-                timestamps = [ev.timestamp for ev in relevant_evidence if ev.timestamp is not None]
-                start_ts = min(timestamps) if timestamps else 0.0
-                end_ts = max(timestamps) if timestamps else None
-                conf = max([ev.confidence for ev in relevant_evidence], default=result.overall_confidence)
-
-                detection_model = DetectionModel(
-                    category=category,
-                    confidence=round(conf, 4),
-                    start_timestamp=round(start_ts, 2),
-                    end_timestamp=round(end_ts, 2) if end_ts is not None else None,
-                    explanation=f"Policy finding for '{category}' supported by multi-modal evidence synthesis.",
+        if findings:
+            for finding in findings:
+                # Supporting evidence for this category
+                cat_evidence = get_category_supporting_evidence(
+                    category=finding.category,
+                    evidence_items=result.supporting_evidence,
                 )
 
-                # Attach traceable evidence items to this detection
-                for ev in relevant_evidence:
-                    # Sanitize storage_path to avoid exposing server-side absolute paths
-                    sanitized_ref = Path(ev.reference).name if "/" in ev.reference or "\\" in ev.reference else ev.reference
-                    evidence_model = EvidenceModel(
-                        type=ev.modality,
-                        timestamp=round(ev.timestamp if ev.timestamp is not None else start_ts, 2),
-                        storage_path=sanitized_ref,
-                        content=ev.description,
-                    )
-                    detection_model.evidence_items.append(evidence_model)
+                if finding.events:
+                    for event in finding.events:
+                        detection_model = DetectionModel(
+                            category=finding.category,
+                            confidence=round(event.confidence, 4),
+                            start_timestamp=round(event.start_time, 2),
+                            end_timestamp=round(event.end_time, 2) if event.end_time is not None else None,
+                            explanation=event.description or finding.summary,
+                        )
 
-                db_result.detections.append(detection_model)
+                        # Find evidence items that support this specific event
+                        event_evidence = [
+                            ev for ev in cat_evidence
+                            if ev.reference in event.evidence_ids
+                            or (
+                                ev.timestamp is not None
+                                and (event.start_time - 1.0) <= ev.timestamp <= (event.end_time + 1.0)
+                            )
+                        ]
+                        if not event_evidence:
+                            event_evidence = cat_evidence
+
+                        for ev in event_evidence:
+                            sanitized_ref = (
+                                Path(ev.reference).name
+                                if ("/" in ev.reference or "\\" in ev.reference)
+                                else ev.reference
+                            )
+                            evidence_model = EvidenceModel(
+                                type=ev.modality,
+                                timestamp=round(ev.timestamp if ev.timestamp is not None else event.start_time, 2),
+                                storage_path=sanitized_ref,
+                                content=ev.description,
+                            )
+                            detection_model.evidence_items.append(evidence_model)
+
+                        db_result.detections.append(detection_model)
+                else:
+                    # Untimed or empty-event finding fallback
+                    start_ts = 0.0
+                    end_ts = 0.0
+                    detection_model = DetectionModel(
+                        category=finding.category,
+                        confidence=round(finding.confidence, 4),
+                        start_timestamp=round(start_ts, 2),
+                        end_timestamp=round(end_ts, 2),
+                        explanation=finding.summary,
+                    )
+                    for ev in cat_evidence:
+                        sanitized_ref = (
+                            Path(ev.reference).name
+                            if ("/" in ev.reference or "\\" in ev.reference)
+                            else ev.reference
+                        )
+                        evidence_model = EvidenceModel(
+                            type=ev.modality,
+                            timestamp=round(ev.timestamp if ev.timestamp is not None else start_ts, 2),
+                            storage_path=sanitized_ref,
+                            content=ev.description,
+                        )
+                        detection_model.evidence_items.append(evidence_model)
+                    db_result.detections.append(detection_model)
 
         # 3. Map transcript segments
         db_transcripts: list[TranscriptSegmentModel] = []

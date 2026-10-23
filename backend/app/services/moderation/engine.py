@@ -16,7 +16,8 @@ from app.services.moderation.config import (
     HOSTILE_CONTEXT_CATEGORIES,
     ModerationConfig,
 )
-from app.services.moderation.contracts import EvidenceItem, ModerationResult
+from app.services.moderation.contracts import EvidenceItem, ModerationResult, PolicyFinding
+from app.services.moderation.temporal_grouping import build_policy_findings
 
 
 class ModerationEngine:
@@ -48,6 +49,7 @@ class ModerationEngine:
                     category=d.category,
                     confidence=d.confidence,
                     timestamp=d.timestamp,
+                    end_timestamp=d.timestamp,
                     reference=d.evidence_reference,
                     description=f"Visual detection of '{d.category}' at {d.timestamp:.2f}s (conf: {d.confidence:.2f})",
                 )
@@ -60,6 +62,7 @@ class ModerationEngine:
                     category=s.category,
                     confidence=s.confidence,
                     timestamp=s.start_timestamp,
+                    end_timestamp=s.end_timestamp,
                     reference=f"text_{s.start_timestamp:.1f}s_{s.end_timestamp:.1f}s",
                     description=f"Text moderation flag '{s.category}' on '{s.source_text}' (conf: {s.confidence:.2f})",
                 )
@@ -85,6 +88,7 @@ class ModerationEngine:
                             category=win.category,
                             confidence=win.confidence,
                             timestamp=win.start_timestamp,
+                            end_timestamp=win.end_timestamp,
                             reference=ref_str,
                             description=f"Context [{win.start_timestamp:.1f}s - {win.end_timestamp:.1f}s]: '{win.category}' (status: {win.status}) — {win.reasoning}",
                         )
@@ -126,13 +130,17 @@ class ModerationEngine:
 
         # 4. Assess Individual Policy Risks
         signal_risks: list[tuple[str, float, float]] = []  # (policy_category, individual_risk, confidence)
-        has_hostile_text = any(
-            any(h in s.category.lower() for h in ("threat", "violence", "toxic", "harass", "insult"))
+
+        # Distinguish explicit physical threats / violence in speech from general verbal toxicity
+        has_threat_or_violence_text = any(
+            any(h in s.category.lower() for h in ("threat", "threats", "violence", "extreme_violence"))
             for s in valid_text_signals
         )
         has_conflicting_signals = False
 
-        # Visual detections evaluation
+        # Visual detections evaluation:
+        # Group valid visual detections by effective policy category
+        policy_visual_dets: dict[str, list[VisualDetection]] = {}
         for d in valid_detections:
             cat_lower = d.category.strip().lower()
             is_dual_use = any(obj in cat_lower for obj in DUAL_USE_OBJECTS)
@@ -140,52 +148,57 @@ class ModerationEngine:
             is_policy_direct = self.config.get_policy_severity(cat_lower) > 0.0
 
             if is_dual_use:
-                if is_benign_context and not has_hostile_text:
-                    # Benign culinary/craft context fully mitigates dual-use object to zero policy risk
+                if is_benign_context and not has_threat_or_violence_text:
+                    # Benign culinary/craft/sports context fully mitigates dual-use object to zero policy risk
                     continue
-                elif is_hostile_context or has_hostile_text:
-                    # Dual-use object in hostile context is treated as weapon
-                    severity = self.config.get_policy_severity("weapons")
-                    item_risk = severity * d.confidence * self.config.hostile_aggravation_multiplier
-                    signal_risks.append(("weapons", min(1.0, item_risk), d.confidence))
+                elif is_hostile_context or has_threat_or_violence_text:
+                    # Dual-use object in hostile context or accompanied by physical threat text is treated as weapon
+                    policy_visual_dets.setdefault("weapons", []).append(d)
                     flagged_policy_categories.add("weapons")
                 else:
-                    # Unverified context: potentially dangerous weapon
-                    severity = self.config.get_policy_severity("weapons")
-                    item_risk = severity * d.confidence
-                    signal_risks.append(("weapons", min(1.0, item_risk), d.confidence))
+                    # Unverified context: potentially dangerous weapon requiring review
+                    policy_visual_dets.setdefault("weapons", []).append(d)
                     flagged_policy_categories.add("weapons")
                     has_conflicting_signals = True
 
             elif is_explicit_weapon:
-                severity = self.config.get_policy_severity("weapons")
-                item_risk = severity * d.confidence
-                if is_hostile_context:
-                    item_risk *= self.config.hostile_aggravation_multiplier
-                signal_risks.append(("weapons", min(1.0, item_risk), d.confidence))
+                policy_visual_dets.setdefault("weapons", []).append(d)
                 flagged_policy_categories.add("weapons")
                 if not context or is_inconclusive:
                     has_conflicting_signals = True
 
             elif is_policy_direct:
-                severity = self.config.get_policy_severity(cat_lower)
-                item_risk = severity * d.confidence
-                if is_hostile_context:
-                    item_risk *= self.config.hostile_aggravation_multiplier
-                signal_risks.append((cat_lower, min(1.0, item_risk), d.confidence))
+                policy_visual_dets.setdefault(cat_lower, []).append(d)
                 flagged_policy_categories.add(cat_lower)
 
             # Note: Harmless everyday objects (bowl, broccoli, person, spoon, fork) have severity 0.0 and are ignored here
 
-        # Text signals evaluation
+        # Cluster visual detections into discrete temporal events so frame sampling frequency does not multiply risk
+        for cat, cat_dets in policy_visual_dets.items():
+            events = self._cluster_detections_into_events(cat_dets, max_gap_seconds=5.0)
+            severity = self.config.get_policy_severity(cat)
+            for _, _, peak_conf in events:
+                item_risk = severity * peak_conf
+                if is_hostile_context:
+                    item_risk *= self.config.hostile_aggravation_multiplier
+                signal_risks.append((cat, min(1.0, item_risk), peak_conf))
+
+        # Text signals evaluation: cluster nearby transcript segments of the same category
+        text_signals_by_cat: dict[str, list[TextModerationSignal]] = {}
         for s in valid_text_signals:
             severity = self.config.get_policy_severity(s.category)
             if severity > 0.0:
-                item_risk = severity * s.confidence
+                text_signals_by_cat.setdefault(s.category, []).append(s)
+                flagged_policy_categories.add(s.category)
+
+        for cat, cat_sigs in text_signals_by_cat.items():
+            events = self._cluster_text_signals_into_events(cat_sigs, max_gap_seconds=5.0)
+            severity = self.config.get_policy_severity(cat)
+            for _, _, peak_conf in events:
+                item_risk = severity * peak_conf
                 if is_hostile_context:
                     item_risk *= self.config.hostile_aggravation_multiplier
-                signal_risks.append((s.category, min(1.0, item_risk), s.confidence))
-                flagged_policy_categories.add(s.category)
+                signal_risks.append((cat, min(1.0, item_risk), peak_conf))
 
         # Context evaluation
         if context and context.confidence >= self.config.min_signal_confidence and not is_benign_context:
@@ -236,8 +249,8 @@ class ModerationEngine:
                 if cat.lower() in ("child_safety", "self_harm") and conf >= 0.70:
                     risk_score = max(risk_score, 0.95)
 
-            # Conflict: high toxic text vs explicit benign context
-            if has_hostile_text and is_benign_context and context and context.confidence >= 0.7:
+            # Conflict: credible threat/violence text vs explicit benign context
+            if has_threat_or_violence_text and is_benign_context and context and context.confidence >= 0.7:
                 has_conflicting_signals = True
 
             # Inconclusive/failed context with active signals requires human review
@@ -277,6 +290,12 @@ class ModerationEngine:
             flagged_categories=flagged_policy_categories,
         )
 
+        findings = build_policy_findings(
+            detected_categories=sorted(flagged_policy_categories),
+            evidence_items=evidence_items,
+            config=self.config,
+        )
+
         return ModerationResult(
             decision=decision,
             risk_level=risk_level,
@@ -285,6 +304,7 @@ class ModerationEngine:
             detected_categories=tuple(sorted(flagged_policy_categories)),
             supporting_evidence=tuple(evidence_items),
             explanation=explanation,
+            findings=tuple(findings),
         )
 
     def _determine_risk_level(self, risk_score: float) -> RiskLevel:
@@ -394,3 +414,83 @@ class ModerationEngine:
         )
 
         return " ".join(sections)
+
+    @staticmethod
+    def _cluster_detections_into_events(
+        detections: Sequence[VisualDetection],
+        max_gap_seconds: float = 5.0,
+    ) -> list[tuple[float, float, float]]:
+        """Group detections of a single category into discrete temporal events.
+
+        Returns list of (start_time, end_time, peak_confidence) for each event.
+        Consecutive frame detections within max_gap_seconds are coalesced so that
+        high frame sampling rates or camera dwell time do not artificially inflate risk.
+        """
+        if not detections:
+            return []
+
+        sorted_dets = sorted(detections, key=lambda d: getattr(d, "timestamp", 0.0) or 0.0)
+        clusters: list[list[VisualDetection]] = []
+        current_cluster: list[VisualDetection] = [sorted_dets[0]]
+        current_end = getattr(sorted_dets[0], "timestamp", 0.0) or 0.0
+
+        for d in sorted_dets[1:]:
+            t = getattr(d, "timestamp", 0.0) or 0.0
+            if t <= current_end + max_gap_seconds:
+                current_end = max(current_end, t)
+                current_cluster.append(d)
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [d]
+                current_end = t
+
+        if current_cluster:
+            clusters.append(current_cluster)
+
+        events: list[tuple[float, float, float]] = []
+        for c in clusters:
+            st = getattr(c[0], "timestamp", 0.0) or 0.0
+            et = max((getattr(d, "timestamp", 0.0) or 0.0) for d in c)
+            peak_conf = max(d.confidence for d in c)
+            events.append((st, et, peak_conf))
+        return events
+
+    @staticmethod
+    def _cluster_text_signals_into_events(
+        signals: Sequence[TextModerationSignal],
+        max_gap_seconds: float = 5.0,
+    ) -> list[tuple[float, float, float]]:
+        """Group text signals of a single category into discrete temporal events.
+
+        Returns list of (start_time, end_time, peak_confidence) for each event.
+        """
+        if not signals:
+            return []
+
+        sorted_sigs = sorted(signals, key=lambda s: getattr(s, "start_timestamp", 0.0) or 0.0)
+        clusters: list[list[TextModerationSignal]] = []
+        current_cluster: list[TextModerationSignal] = [sorted_sigs[0]]
+        current_end = getattr(sorted_sigs[0], "end_timestamp", 0.0) or (getattr(sorted_sigs[0], "start_timestamp", 0.0) or 0.0)
+
+        for s in sorted_sigs[1:]:
+            st = getattr(s, "start_timestamp", 0.0) or 0.0
+            et = getattr(s, "end_timestamp", 0.0) or st
+            if st <= current_end + max_gap_seconds:
+                current_end = max(current_end, et)
+                current_cluster.append(s)
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [s]
+                current_end = et
+
+        if current_cluster:
+            clusters.append(current_cluster)
+
+        events: list[tuple[float, float, float]] = []
+        for c in clusters:
+            st = getattr(c[0], "start_timestamp", 0.0) or 0.0
+            et = max((getattr(s, "end_timestamp", 0.0) or getattr(s, "start_timestamp", 0.0) or 0.0) for s in c)
+            peak_conf = max(s.confidence for s in c)
+            events.append((st, et, peak_conf))
+        return events
+
